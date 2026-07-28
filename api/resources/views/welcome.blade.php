@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -328,11 +328,11 @@
         <div class="stage">
             <div class="copy">
                 <h1 class="brand">Scanocx</h1>
-                <p class="headline">Backend API dla skanowania i analizy dokumentów</p>
-                <p class="lede">Serwer działa i przyjmuje żądania z aplikacji mobilnej Scanocx.</p>
+                <p class="headline">Backend API for document scanning and analysis</p>
+                <p class="lede">The server is up and accepting requests from the Scanocx mobile app.</p>
                 <div class="actions">
                     <a class="cta" href="/api/health">
-                        Sprawdź health
+                        Check health
                         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
                             <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
                         </svg>
