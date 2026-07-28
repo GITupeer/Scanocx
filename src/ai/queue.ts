@@ -1,0 +1,401 @@
+/**
+ * Globalna kolejka korekty AI przez backend (kolejka Laravel + polling).
+ */
+import { useSyncExternalStore } from 'react';
+
+import { AI_POLL_INTERVAL_MS, isApiConfigured } from '@/src/ai/config';
+import { needsAiRewrite } from '@/src/ai/displayText';
+import * as api from '@/src/api/endpoints';
+import { ApiError } from '@/src/api/types';
+import { getAuthToken } from '@/src/api/token';
+import { getBook, updatePageAi } from '@/src/storage/books';
+import { withBookMetaLock } from '@/src/storage/lock';
+
+export type AiQueueJob = {
+  bookId: string;
+  pageId: string;
+  pageIndex: number;
+};
+
+export type AiQueuePhase =
+  | 'idle'
+  | 'preparing'
+  | 'queued'
+  | 'processing'
+  | 'sending'
+  | 'waiting'
+  | 'parsing'
+  | 'saving';
+
+export type AiQueueState = {
+  total: number;
+  completed: number;
+  failed: number;
+  remaining: number;
+  currentPageIndex: number | null;
+  currentPageId: string | null;
+  currentPageIds: string[];
+  currentBatchLabel: string | null;
+  batchIndex: number;
+  batchCount: number;
+  phase: AiQueuePhase;
+  phaseDetail: string;
+  elapsedSec: number;
+  lastError: string | null;
+  running: boolean;
+  queuePosition: number | null;
+  cloudBatchId: number | null;
+};
+
+const EMPTY_STATE: AiQueueState = {
+  total: 0,
+  completed: 0,
+  failed: 0,
+  remaining: 0,
+  currentPageIndex: null,
+  currentPageId: null,
+  currentPageIds: [],
+  currentBatchLabel: null,
+  batchIndex: 0,
+  batchCount: 0,
+  phase: 'idle',
+  phaseDetail: '',
+  elapsedSec: 0,
+  lastError: null,
+  running: false,
+  queuePosition: null,
+  cloudBatchId: null,
+};
+
+let total = 0;
+let completed = 0;
+let failed = 0;
+let phase: AiQueuePhase = 'idle';
+let phaseDetail = '';
+let elapsedSec = 0;
+let lastError: string | null = null;
+let batchStartedAt: number | null = null;
+let tickTimer: ReturnType<typeof setInterval> | null = null;
+let running = false;
+let queuePosition: number | null = null;
+let cloudBatchId: number | null = null;
+let currentPageIds: string[] = [];
+let appliedDone = new Set<number>();
+
+let snapshot: AiQueueState = EMPTY_STATE;
+const listeners = new Set<() => void>();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function publish(): void {
+  snapshot = {
+    total,
+    completed,
+    failed,
+    remaining: Math.max(0, total - completed),
+    currentPageIndex: null,
+    currentPageId: currentPageIds[0] ?? null,
+    currentPageIds: [...currentPageIds],
+    currentBatchLabel:
+      queuePosition != null && queuePosition > 0
+        ? `pozycja w kolejce: ${queuePosition}`
+        : cloudBatchId
+          ? `batch #${cloudBatchId}`
+          : null,
+    batchIndex: completed,
+    batchCount: total,
+    phase,
+    phaseDetail,
+    elapsedSec,
+    lastError,
+    running,
+    queuePosition,
+    cloudBatchId,
+  };
+  listeners.forEach((listener) => listener());
+}
+
+function stopTicker(): void {
+  if (tickTimer) {
+    clearInterval(tickTimer);
+    tickTimer = null;
+  }
+  batchStartedAt = null;
+  elapsedSec = 0;
+}
+
+function startTicker(): void {
+  stopTicker();
+  batchStartedAt = Date.now();
+  elapsedSec = 0;
+  tickTimer = setInterval(() => {
+    if (batchStartedAt == null) return;
+    elapsedSec = Math.floor((Date.now() - batchStartedAt) / 1000);
+    publish();
+  }, 1000);
+}
+
+function resetCounters(): void {
+  total = 0;
+  completed = 0;
+  failed = 0;
+  phase = 'idle';
+  phaseDetail = '';
+  lastError = null;
+  queuePosition = null;
+  cloudBatchId = null;
+  currentPageIds = [];
+  appliedDone = new Set();
+  running = false;
+  stopTicker();
+}
+
+async function applyJobResults(
+  bookId: string,
+  jobs: Awaited<ReturnType<typeof api.fetchAiBatch>>['jobs']
+): Promise<void> {
+  for (const job of jobs) {
+    if (appliedDone.has(job.id)) continue;
+
+    if (job.status === 'done' && job.ai_text) {
+      appliedDone.add(job.id);
+      await withBookMetaLock(() =>
+        updatePageAi(bookId, job.page_local_id, {
+          aiText: job.ai_text ?? '',
+          aiStatus: 'done',
+          aiError: null,
+        })
+      );
+    } else if (job.status === 'failed') {
+      appliedDone.add(job.id);
+      await withBookMetaLock(() =>
+        updatePageAi(bookId, job.page_local_id, {
+          aiStatus: 'error',
+          aiError: job.error ?? 'Korekta AI nie powiodła się.',
+        })
+      );
+    }
+  }
+}
+
+async function pollUntilDone(bookId: string, batchId: number): Promise<void> {
+  while (running) {
+    const batch = await api.fetchAiBatch(batchId);
+    completed = batch.completed + batch.failed;
+    failed = batch.failed;
+    queuePosition = batch.queue_position;
+    currentPageIds = batch.jobs
+      .filter((j) => j.status === 'queued' || j.status === 'processing')
+      .map((j) => j.page_local_id);
+
+    if (queuePosition != null && queuePosition > 3) {
+      phase = 'queued';
+      phaseDetail = `Jesteś ${queuePosition}. w globalnej kolejce AI…`;
+    } else if (batch.status === 'queued' || (queuePosition != null && queuePosition > 1)) {
+      phase = 'queued';
+      phaseDetail =
+        queuePosition != null
+          ? `W kolejce — jesteś ${queuePosition}.`
+          : 'Oczekiwanie w kolejce…';
+    } else {
+      phase = 'processing';
+      phaseDetail = `Przetwarzanie ${batch.completed + batch.failed}/${batch.total}…`;
+    }
+
+    await applyJobResults(bookId, batch.jobs);
+    publish();
+
+    const done =
+      batch.status === 'done' ||
+      batch.status === 'failed' ||
+      batch.status === 'partial' ||
+      batch.completed + batch.failed >= batch.total;
+
+    if (done) {
+      if (batch.failed > 0 && batch.completed === 0) {
+        lastError = batch.jobs.find((j) => j.error)?.error ?? 'Analiza AI nie powiodła się.';
+      }
+      return;
+    }
+
+    await sleep(AI_POLL_INTERVAL_MS);
+  }
+}
+
+async function startCloudAnalysis(
+  bookId: string,
+  pageIds?: string[],
+  waitUntilDone = false
+): Promise<number> {
+  if (!isApiConfigured()) {
+    throw new Error('Brak EXPO_PUBLIC_API_BASE_URL.');
+  }
+  const token = await getAuthToken();
+  if (!token) {
+    throw new ApiError('Zaloguj się, aby uruchomić analizę AI.', 401);
+  }
+  if (running) {
+    throw new Error('Analiza AI już trwa.');
+  }
+
+  const book = await getBook(bookId);
+  const pages = book.pages
+    .filter((page) => (pageIds ? pageIds.includes(page.id) : needsAiRewrite(page)))
+    .filter((page) => page.ocrText.trim().length > 0)
+    .sort((a, b) => a.index - b.index);
+
+  if (pages.length === 0) {
+    return 0;
+  }
+
+  running = true;
+  total = pages.length;
+  completed = 0;
+  failed = 0;
+  lastError = null;
+  currentPageIds = pages.map((p) => p.id);
+  appliedDone = new Set();
+  phase = 'preparing';
+  phaseDetail = 'Wysyłam OCR do chmury…';
+  startTicker();
+  publish();
+
+  for (const page of pages) {
+    await withBookMetaLock(() =>
+      updatePageAi(bookId, page.id, { aiStatus: 'pending', aiError: null })
+    );
+  }
+
+  try {
+    const batch = await api.analyzeBook({
+      local_id: book.id,
+      title: book.title,
+      pages: pages.map((page) => ({
+        local_id: page.id,
+        index: page.index,
+        ocr_text: page.ocrText,
+        printed_page_number: page.printedPageNumber,
+      })),
+    });
+
+    cloudBatchId = batch.id;
+    queuePosition = batch.queue_position;
+    phase = 'queued';
+    phaseDetail =
+      queuePosition != null
+        ? `W kolejce — jesteś ${queuePosition}.`
+        : 'Dodano do kolejki AI…';
+    publish();
+
+    const finish = async () => {
+      try {
+        await pollUntilDone(bookId, batch.id);
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : 'Błąd odczytu statusu kolejki.';
+        publish();
+        throw error;
+      } finally {
+        stopTicker();
+        running = false;
+        phase = 'idle';
+        phaseDetail = '';
+        queuePosition = null;
+        publish();
+        setTimeout(() => {
+          if (!running) {
+            resetCounters();
+            publish();
+          }
+        }, 2500);
+      }
+    };
+
+    if (waitUntilDone) {
+      await finish();
+    } else {
+      void finish().catch(() => undefined);
+    }
+
+    return pages.length;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Błąd analizy AI.';
+    for (const page of pages) {
+      const fresh = (await getBook(bookId)).pages.find((p) => p.id === page.id);
+      if (fresh?.aiStatus === 'done') continue;
+      await withBookMetaLock(() =>
+        updatePageAi(bookId, page.id, {
+          aiStatus: 'error',
+          aiError: message,
+        })
+      );
+    }
+    lastError = message;
+    running = false;
+    phase = 'idle';
+    stopTicker();
+    publish();
+    throw error;
+  }
+}
+
+export function enqueueAiRewrite(job: AiQueueJob): boolean {
+  if (!isApiConfigured() || running) return false;
+  void startCloudAnalysis(job.bookId, [job.pageId], false).catch(() => undefined);
+  return true;
+}
+
+export function enqueueAiRewriteJobs(jobs: AiQueueJob[]): number {
+  if (jobs.length === 0 || running) return 0;
+  const bookId = jobs[0]?.bookId;
+  if (!bookId) return 0;
+  void startCloudAnalysis(
+    bookId,
+    jobs.map((j) => j.pageId),
+    false
+  ).catch(() => undefined);
+  return jobs.length;
+}
+
+export function enqueueAiRewriteForce(job: AiQueueJob): boolean {
+  return enqueueAiRewrite(job);
+}
+
+export function cancelAiForPage(_pageId: string): void {
+  // v1: brak anulowania jobów w chmurze
+}
+
+export function cancelAiForBook(_bookId: string): void {
+  // v1: brak anulowania jobów w chmurze
+}
+
+export async function enqueuePendingAiForBook(bookId: string): Promise<number> {
+  if (!isApiConfigured()) return 0;
+  return startCloudAnalysis(bookId, undefined, false);
+}
+
+export async function runPageAiExclusive(bookId: string, pageId: string): Promise<string> {
+  await startCloudAnalysis(bookId, [pageId], true);
+  const book = await getBook(bookId);
+  const page = book.pages.find((p) => p.id === pageId);
+  if (!page || page.aiStatus !== 'done' || !page.aiText.trim()) {
+    throw new Error(page?.aiError ?? 'Korekta AI nie powiodła się.');
+  }
+  return page.aiText;
+}
+
+export function getAiQueueState(): AiQueueState {
+  return snapshot;
+}
+
+export function subscribeAiQueue(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function useAiQueue(): AiQueueState {
+  return useSyncExternalStore(subscribeAiQueue, getAiQueueState, getAiQueueState);
+}

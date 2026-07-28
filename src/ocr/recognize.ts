@@ -1,0 +1,124 @@
+import { isSupported, recognizeText } from 'expo-mlkit-ocr';
+import type { RecognitionResult } from 'expo-mlkit-ocr';
+
+import { enhanceForOcr, type EnhanceForOcrOptions } from '@/src/images/enhanceForOcr';
+import { ensurePortraitUri, rotateUri } from '@/src/images/ensurePortrait';
+import { extractPrintedPageNumber } from '@/src/ocr/extractPageNumber';
+import { pickUprightWithOcr, scoreUpright } from '@/src/ocr/upright';
+import { persistPageImageFile, updatePageOcr } from '@/src/storage/books';
+
+export function isOcrAvailable(): boolean {
+  try {
+    return isSupported();
+  } catch {
+    return false;
+  }
+}
+
+export type RunPageOcrOptions = {
+  /** Porównaj 0° vs 180° (domyślnie tak). Wyłącz po ręcznym obrocie. */
+  detectUpright?: boolean;
+  /** Parametry preprocessingu pod OCR (kontrast / jasność). */
+  enhance?: EnhanceForOcrOptions;
+};
+
+async function recognizeBest(
+  visualUri: string,
+  enhancedUri: string,
+  precomputedEnhanced?: RecognitionResult
+): Promise<RecognitionResult> {
+  const enhancedResult = precomputedEnhanced ?? (await recognizeText(enhancedUri));
+  const enhancedScore = scoreUpright(enhancedResult);
+
+  // Jeśli enhancement słabo działa (ciemna / nietypowa strona), porównaj z oryginałem.
+  if (enhancedScore >= 48) {
+    return enhancedResult;
+  }
+
+  const originalResult = await recognizeText(visualUri);
+  return scoreUpright(originalResult) > enhancedScore + 8 ? originalResult : enhancedResult;
+}
+
+/**
+ * Pion + opcjonalne wykrycie „do góry nogami” (OCR 0° vs 180°) + zapis tekstu.
+ * Podgląd zostaje kolorowy; pod OCR idzie wersja z podbitym kontrastem.
+ */
+export async function runPageOcr(
+  bookId: string,
+  pageId: string,
+  imageUri: string,
+  options: RunPageOcrOptions = {}
+): Promise<string> {
+  const detectUpright = options.detectUpright !== false;
+  await updatePageOcr(bookId, pageId, { ocrStatus: 'pending', resetAi: true });
+
+  try {
+    if (!isOcrAvailable()) {
+      throw new Error('OCR nie jest dostępne na tym urządzeniu. Wymagany jest development build z ML Kit.');
+    }
+
+    const portraitUri = await ensurePortraitUri(imageUri);
+    const enhancedPortrait = await enhanceForOcr(portraitUri, options.enhance);
+
+    let visualUri = portraitUri;
+    let result: RecognitionResult;
+
+    if (detectUpright) {
+      const upright = await pickUprightWithOcr(enhancedPortrait);
+      if (upright.rotated) {
+        visualUri = await rotateUri(portraitUri, 180);
+      }
+      result = await recognizeBest(visualUri, upright.uri, upright.result);
+    } else {
+      result = await recognizeBest(visualUri, enhancedPortrait);
+    }
+
+    await persistPageImageFile(bookId, pageId, visualUri);
+
+    const { printedPageNumber, cleanedText } = extractPrintedPageNumber(result);
+
+    await updatePageOcr(bookId, pageId, {
+      ocrText: cleanedText,
+      printedPageNumber,
+      ocrStatus: 'done',
+      resetAi: true,
+    });
+
+    return cleanedText;
+  } catch (error) {
+    await updatePageOcr(bookId, pageId, { ocrStatus: 'error', resetAi: false });
+    throw error;
+  }
+}
+
+export type BatchPortraitOcrProgress = {
+  current: number;
+  total: number;
+  pageIndex: number;
+};
+
+/**
+ * Dla każdej strony: wymusza pion, wykrywa dół kadru i ponownie uruchamia OCR.
+ */
+export async function fixPortraitAndRerunOcrForBook(
+  bookId: string,
+  pages: { id: string; index: number; imageUri: string }[],
+  onProgress?: (progress: BatchPortraitOcrProgress) => void
+): Promise<{ ok: number; failed: number }> {
+  let ok = 0;
+  let failed = 0;
+  const total = pages.length;
+
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    onProgress?.({ current: i + 1, total, pageIndex: page.index });
+    try {
+      await runPageOcr(bookId, page.id, page.imageUri);
+      ok += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+
+  return { ok, failed };
+}
