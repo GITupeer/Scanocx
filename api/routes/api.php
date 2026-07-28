@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\AiController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\OcrController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/register', [AuthController::class, 'register']);
@@ -20,6 +21,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/ai/usage', [AiController::class, 'usage']);
     Route::post('/ai/analyze', [AiController::class, 'analyze']);
     Route::get('/ai/batches/{id}', [AiController::class, 'batch']);
+
+    Route::get('/ocr/quota', [OcrController::class, 'quota']);
+    Route::post('/ocr/reserve', [OcrController::class, 'reserve']);
+    Route::post('/ocr/consume', [OcrController::class, 'consume']);
+    Route::post('/ocr/release', [OcrController::class, 'release']);
 
     Route::middleware('role:admin')->prefix('admin')->group(function () {
         Route::get('/users', [AdminUserController::class, 'index']);

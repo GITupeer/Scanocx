@@ -11,11 +11,11 @@ import {
   runPageAiExclusive,
   useAiQueue,
 } from '@/src/ai/queue';
-import { ApiError } from '@/src/api/types';
 import { useAuth } from '@/src/auth/AuthProvider';
 import type { Book, BookPage } from '@/src/domain/types';
 import { isLandscapeUri } from '@/src/images/ensurePortrait';
 import { cancelOcrForPage, runPageOcrExclusive, useOcrQueue } from '@/src/ocr/queue';
+import { OcrQuotaExceededError } from '@/src/ocr/quota';
 import {
   deletePage,
   getBook,
@@ -188,7 +188,7 @@ export default function PageDetailScreen() {
       });
       const found = updated.pages.find((p) => p.id === pageId) ?? null;
       if (found) applyPage(updated, found);
-      Alert.alert('Zapisano', 'Tekst OCR i AI zostały zaktualizowane.');
+      Alert.alert('Zapisano', 'Tekst ze skanu i tekst AI zostały zaktualizowane.');
     } catch (error) {
       Alert.alert('Błąd', error instanceof Error ? error.message : 'Nie udało się zapisać.');
     } finally {
@@ -206,7 +206,14 @@ export default function PageDetailScreen() {
       setTextTab('ocr');
       await refresh();
     } catch (error) {
-      Alert.alert('OCR', error instanceof Error ? error.message : 'Rozpoznawanie nie powiodło się.');
+      Alert.alert(
+        'Odczyt tekstu',
+        error instanceof OcrQuotaExceededError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Odczytywanie tekstu nie powiodło się.',
+      );
       await refresh();
     } finally {
       setRunningOcr(false);
@@ -215,42 +222,19 @@ export default function PageDetailScreen() {
 
   const onRetryAi = async () => {
     if (!id || !page) return;
-    if (!isApiConfigured()) {
-      Alert.alert('AI', 'Brak EXPO_PUBLIC_API_BASE_URL w konfiguracji.');
-      return;
-    }
+    if (!isApiConfigured()) return;
     if (!isLoggedIn) {
-      Alert.alert('AI', 'Zaloguj się, aby uruchomić korektę AI.', [
-        { text: 'Anuluj', style: 'cancel' },
-        { text: 'Zaloguj', onPress: () => router.push('/login') },
-      ]);
+      router.push('/login');
       return;
     }
-    if (!ocrText.trim()) {
-      Alert.alert('AI', 'Najpierw potrzebny jest tekst OCR.');
-      return;
-    }
+    if (!ocrText.trim()) return;
     setRunningAi(true);
     try {
       const corrected = await runPageAiExclusive(id, page.id);
       setAiText(corrected);
       setTextTab('ai');
       await refresh();
-    } catch (error) {
-      const message =
-        error instanceof ApiError
-          ? error.message
-          : error instanceof Error
-            ? error.message
-            : 'Korekta nie powiodła się.';
-      if (error instanceof ApiError && error.status === 401) {
-        Alert.alert('AI', message, [
-          { text: 'Anuluj', style: 'cancel' },
-          { text: 'Zaloguj', onPress: () => router.push('/login') },
-        ]);
-      } else {
-        Alert.alert('AI', message);
-      }
+    } catch {
       await refresh();
     } finally {
       setRunningAi(false);
@@ -264,12 +248,21 @@ export default function PageDetailScreen() {
       const { page: rotated } = await rotatePageImage180(id, page.id);
       setPage(rotated);
       setRunningOcr(true);
-      const recognized = await runPageOcrExclusive(id, rotated.id, rotated.imageUri, {
-        detectUpright: false,
-      });
-      setOcrText(recognized);
-      setAiText('');
-      setTextTab('ocr');
+      try {
+        const recognized = await runPageOcrExclusive(id, rotated.id, rotated.imageUri, {
+          detectUpright: false,
+        });
+        setOcrText(recognized);
+        setAiText('');
+        setTextTab('ocr');
+      } catch (error) {
+        if (error instanceof OcrQuotaExceededError) {
+          Alert.alert('Obrócono', error.message);
+          await refresh();
+          return;
+        }
+        throw error;
+      }
       await refresh();
     } catch (error) {
       Alert.alert('Obrót', error instanceof Error ? error.message : 'Nie udało się obrócić strony.');
@@ -375,19 +368,17 @@ export default function PageDetailScreen() {
               <Pressable
                 onPress={() => setTextTab('ocr')}
                 style={[styles.tab, !editingAi && styles.tabActive]}>
-                <Text style={[styles.tabLabel, !editingAi && styles.tabLabelActive]}>Tekst OCR</Text>
+                <Text style={[styles.tabLabel, !editingAi && styles.tabLabelActive]}>Tekst ze skanu</Text>
               </Pressable>
             </View>
 
             {page.aiStatus === 'error' && page.aiError ? (
-              <Pressable
-                onPress={() => Alert.alert('Błąd AI', page.aiError ?? 'Nieznany błąd')}
-                style={styles.errorBox}>
+              <View style={styles.errorBox}>
                 <Icon name="alert" size={16} color={colors.danger} />
                 <Text style={styles.errorText} numberOfLines={4}>
                   {page.aiError}
                 </Text>
-              </Pressable>
+              </View>
             ) : null}
 
             {editingAi ? (
@@ -398,17 +389,17 @@ export default function PageDetailScreen() {
                 placeholder="Tu pojawi się tekst po korekcie AI…"
                 multiline
                 minHeight={240}
-                hint="Obie wersje (OCR i AI) są przechowywane osobno."
+                hint="Obie wersje (ze skanu i po AI) są przechowywane osobno."
               />
             ) : (
               <TextField
-                label="Surowy tekst OCR"
+                label="Tekst ze skanu"
                 value={ocrText}
                 onChangeText={setOcrText}
-                placeholder="Tekst OCR pojawi się tutaj…"
+                placeholder="Odczytany tekst pojawi się tutaj…"
                 multiline
                 minHeight={240}
-                hint="Edycja OCR unieważnia korektę AI przy zapisie."
+                hint="Edycja tekstu ze skanu unieważnia korektę AI przy zapisie."
               />
             )}
           </ScrollView>
@@ -466,7 +457,7 @@ export default function PageDetailScreen() {
           <Row
             icon="ai"
             label="Korekta AI"
-            detail="Popraw błędy OCR bez skracania tekstu"
+            detail="Popraw literówki i błędy odczytu bez skracania tekstu"
             disabled={busy}
             onPress={() => {
               setMenuOpen(false);
@@ -476,8 +467,12 @@ export default function PageDetailScreen() {
           <View style={styles.sheetDivider} />
           <Row
             icon="notes"
-            label="Pion + OCR"
-            detail="Wyprostuj i przeczytaj ponownie"
+            label={page.ocrStatus === 'idle' ? 'Odczytaj tekst' : 'Pion + odczyt'}
+            detail={
+              page.ocrStatus === 'idle'
+                ? 'Uruchom OCR dla tego zdjęcia'
+                : 'Wyprostuj stronę i odczytaj tekst ponownie'
+            }
             disabled={busy}
             onPress={() => {
               setMenuOpen(false);

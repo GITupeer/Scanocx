@@ -2,9 +2,8 @@
  * Ekran skanowania — Capture v2
  *
  * Spust: tylko takePictureAsync.
- * W tle: crop do ramki → zapis.
- * OCR czeka w kolejce i startuje po wyjściu z trybu zdjęć — inaczej rozpoznawanie
- * blokowałoby wątek JS na kilka sekund w środku sesji.
+ * Potem: crop → zapis → opcjonalne OCR (limit free / nielimitowane Pro).
+ * Zdjęcia bez OCR są zawsze dozwolone. Przy OCR kolejne zdjęcie po zakończeniu odczytu.
  */
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -16,7 +15,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CAPTURE_V2_GUIDE, pickFastPictureSize, snapCameraV2 } from '@/src/capture/v2';
 import { cropToGuide } from '@/src/images/cropToGuide';
-import { enqueueOcr, holdOcrQueue, releaseOcrQueue, useOcrQueue } from '@/src/ocr/queue';
+import { runPageOcrExclusive } from '@/src/ocr/queue';
+import { canRunOcr, OcrQuotaExceededError } from '@/src/ocr/quota';
 import { addPageFromCameraUri, replacePageFromCameraUri } from '@/src/storage/books';
 import {
   Badge,
@@ -49,6 +49,7 @@ export default function CaptureScreenV2() {
   const cameraRef = useRef<CameraView>(null);
   const queueRef = useRef<Job[]>([]);
   const workingRef = useRef(false);
+  const quotaAlertedRef = useRef(false);
 
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraReady, setCameraReady] = useState(false);
@@ -57,21 +58,27 @@ export default function CaptureScreenV2() {
   const [snapping, setSnapping] = useState(false);
   const [flash, setFlash] = useState(false);
   const [pending, setPending] = useState(0);
+  const [recognizingPage, setRecognizingPage] = useState<number | null>(null);
   const [sessionCount, setSessionCount] = useState(0);
   const [hint, setHint] = useState<string | null>(null);
   const [area, setArea] = useState({ width: 0, height: 0 });
 
-  const ocrQueue = useOcrQueue();
-  const awaitingOcr = ocrQueue.remaining;
+  const busy = snapping || pending > 0 || recognizingPage != null;
 
-  // Dopóki kamera jest na wierzchu, OCR stoi. Rusza przy wyjściu z ekranu.
-  // Ciemny ekran potrzebuje też jasnych ikon paska statusu.
+  const notifyOcrQuota = useCallback(() => {
+    if (quotaAlertedRef.current) return;
+    quotaAlertedRef.current = true;
+    Alert.alert(
+      'Limit OCR',
+      'Darmowy plan: 30 odczytów tekstu na miesiąc. Zdjęcia zapisujesz dalej bez limitu — OCR możesz uruchomić później (Pro = nielimitowane).'
+    );
+  }, []);
+
+  // Ciemny ekran potrzebuje jasnych ikon paska statusu.
   useFocusEffect(
     useCallback(() => {
-      holdOcrQueue();
       setStatusBarStyle('light');
       return () => {
-        releaseOcrQueue();
         setStatusBarStyle('dark');
       };
     }, [])
@@ -122,35 +129,64 @@ export default function CaptureScreenV2() {
 
         if (isReplace) {
           const { page } = await replacePageFromCameraUri(id, replacePageId, preparedUri);
-          setHint(`Podmieniono stronę ${page.index}`);
-          enqueueOcr({
-            bookId: id,
-            pageId: page.id,
-            pageIndex: page.index,
-            imageUri: page.imageUri,
-          });
+          if (await canRunOcr()) {
+            setHint(`Rozpoznawanie tekstu…`);
+            setRecognizingPage(page.index);
+            try {
+              await runPageOcrExclusive(id, page.id, page.imageUri);
+              setHint(`Podmieniono stronę ${page.index}`);
+            } catch (error) {
+              if (error instanceof OcrQuotaExceededError) {
+                notifyOcrQuota();
+                setHint(`Zapisano zdjęcie · bez OCR · strona ${page.index}`);
+              } else {
+                throw error;
+              }
+            } finally {
+              setRecognizingPage(null);
+            }
+          } else {
+            notifyOcrQuota();
+            setHint(`Zapisano zdjęcie · bez OCR · strona ${page.index}`);
+          }
           router.replace(`/book/${id}/page/${page.id}`);
           break;
         }
 
         const { page } = await addPageFromCameraUri(id, preparedUri);
         setSessionCount((n) => n + 1);
-        setHint(`Zapisano stronę ${page.index}`);
-        enqueueOcr({
-          bookId: id,
-          pageId: page.id,
-          pageIndex: page.index,
-          imageUri: page.imageUri,
-        });
+        if (await canRunOcr()) {
+          setHint(`Rozpoznawanie tekstu…`);
+          setRecognizingPage(page.index);
+          try {
+            await runPageOcrExclusive(id, page.id, page.imageUri);
+            setHint(`Gotowe · strona ${page.index}`);
+          } catch (error) {
+            if (error instanceof OcrQuotaExceededError) {
+              notifyOcrQuota();
+              setHint(`Zapisano · bez OCR · strona ${page.index}`);
+            } else {
+              throw error;
+            }
+          } finally {
+            setRecognizingPage(null);
+          }
+        } else {
+          notifyOcrQuota();
+          setHint(`Zapisano · bez OCR · strona ${page.index}`);
+        }
       } catch (error) {
-        Alert.alert('Błąd', error instanceof Error ? error.message : 'Zapis nieudany.');
+        Alert.alert(
+          'Błąd',
+          error instanceof Error ? error.message : 'Zapis lub rozpoznawanie tekstu nieudane.'
+        );
       } finally {
         setPending((n) => Math.max(0, n - 1));
       }
     }
 
     workingRef.current = false;
-  }, [id, isReplace, replacePageId, router]);
+  }, [id, isReplace, notifyOcrQuota, replacePageId, router]);
 
   const enqueue = useCallback(
     (job: Job) => {
@@ -163,7 +199,7 @@ export default function CaptureScreenV2() {
 
   const onShutter = useCallback(async () => {
     const cam = cameraRef.current;
-    if (!cam || !cameraReady || snapping) return;
+    if (!cam || !cameraReady || busy) return;
 
     setSnapping(true);
     try {
@@ -172,24 +208,25 @@ export default function CaptureScreenV2() {
 
       setFlash(true);
       setTimeout(() => setFlash(false), 80);
-      setHint(isReplace ? 'Podmieniam…' : 'Zrobione');
+      setHint(isReplace ? 'Podmieniam…' : 'Zrobione · zapisuję…');
       enqueue({ uri: shot.uri, crop: true, exifOrientation: shot.exifOrientation });
     } catch (error) {
       Alert.alert('Błąd', error instanceof Error ? error.message : 'Nie udało się zrobić zdjęcia.');
     } finally {
       setSnapping(false);
     }
-  }, [cameraReady, enqueue, isReplace, snapping]);
+  }, [busy, cameraReady, enqueue, isReplace]);
 
   const onGallery = useCallback(async () => {
-    if (snapping || pending > 0) return;
+    if (busy) return;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       quality: 1,
     });
     if (result.canceled || !result.assets[0]?.uri) return;
+    setHint('Zapisuję…');
     enqueue({ uri: result.assets[0].uri, crop: false });
-  }, [enqueue, pending, snapping]);
+  }, [busy, enqueue]);
 
   if (!permission) {
     return <View style={styles.root} />;
@@ -221,7 +258,8 @@ export default function CaptureScreenV2() {
 
   const guide = CAPTURE_V2_GUIDE;
   const guideHeightPx = Math.round(previewSize.height * guide.height);
-  const canLeave = !snapping && pending === 0;
+  const canLeave = !busy;
+  const shutterLocked = !cameraReady || busy;
 
   return (
     <View style={styles.root}>
@@ -289,7 +327,7 @@ export default function CaptureScreenV2() {
                     height: `${guide.height * 100}%`,
                   },
                 ]}>
-                <ScanBeam height={guideHeightPx} active={cameraReady && !snapping} />
+                <ScanBeam height={guideHeightPx} active={cameraReady && !busy} />
                 <View style={[styles.corner, styles.cornerTL]} />
                 <View style={[styles.corner, styles.cornerTR]} />
                 <View style={[styles.corner, styles.cornerBL]} />
@@ -332,23 +370,21 @@ export default function CaptureScreenV2() {
           />
         </View>
 
-        {awaitingOcr > 0 ? (
+        {recognizingPage != null ? (
           <View pointerEvents="none" style={[styles.queueChip, { top: insets.top + 68 }]}>
             <Icon name="ai" size={13} color={colors.white} />
-            <Text style={styles.queueChipText}>
-              Do analizy: {awaitingOcr}
-              {isReplace ? '' : ' · start po „Gotowe”'}
-            </Text>
+            <Text style={styles.queueChipText}>Rozpoznawanie tekstu · strona {recognizingPage}</Text>
           </View>
         ) : null}
 
         {hint ? (
           <View pointerEvents="none" style={styles.toast}>
-            <Icon name="check" size={14} color={colors.white} />
+            <Icon name={recognizingPage != null ? 'ai' : 'check'} size={14} color={colors.white} />
             <Text style={styles.toastText}>
               {hint}
-              {!isReplace && sessionCount > 0 ? ` · zdjęć: ${sessionCount}` : ''}
-              {pending > 0 ? ` · zapis: ${pending}` : ''}
+              {!isReplace && sessionCount > 0 && recognizingPage == null
+                ? ` · zdjęć: ${sessionCount}`
+                : ''}
             </Text>
           </View>
         ) : null}
@@ -362,12 +398,12 @@ export default function CaptureScreenV2() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Wybierz z galerii"
-          disabled={snapping || (isReplace && pending > 0)}
+          disabled={busy}
           onPress={() => void onGallery()}
           style={({ pressed }) => [
             styles.sideButton,
             pressed && styles.sidePressed,
-            (snapping || (isReplace && pending > 0)) && styles.disabled,
+            busy && styles.disabled,
           ]}>
           <Icon name="gallery" size={22} color={colors.white} />
           <Text style={styles.sideLabel}>Galeria</Text>
@@ -375,16 +411,20 @@ export default function CaptureScreenV2() {
 
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Zrób zdjęcie"
-          disabled={!cameraReady || snapping}
+          accessibilityLabel={
+            recognizingPage != null
+              ? 'Poczekaj na rozpoznawanie tekstu'
+              : 'Zrób zdjęcie'
+          }
+          disabled={shutterLocked}
           onPress={() => void onShutter()}
           style={({ pressed }) => [
             styles.shutterWrap,
-            (!cameraReady || snapping) && styles.disabled,
-            pressed && cameraReady && !snapping ? styles.shutterPressed : null,
+            shutterLocked && styles.disabled,
+            pressed && !shutterLocked ? styles.shutterPressed : null,
           ]}>
           <Gradient colors={gradients.brandVivid} style={styles.shutterRing}>
-            <View style={[styles.shutterCore, snapping && styles.shutterCoreBusy]} />
+            <View style={[styles.shutterCore, busy && styles.shutterCoreBusy]} />
           </Gradient>
         </Pressable>
 

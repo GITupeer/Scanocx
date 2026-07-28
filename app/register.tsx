@@ -64,7 +64,10 @@ export default function RegisterScreen() {
           ]}
           keyboardShouldPersistTaps="handled">
           <Text style={styles.title}>Załóż konto</Text>
-          <Text style={styles.subtitle}>Darmowy plan: 3 strony AI dziennie.</Text>
+          <Text style={styles.subtitle}>
+            Darmowy: 30 OCR / miesiąc · zdjęcia bez limitu · 3 strony AI / dzień. Pro =
+            nielimitowane OCR i AI.
+          </Text>
 
           <TextField
             label="Imię"

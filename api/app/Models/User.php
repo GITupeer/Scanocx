@@ -50,4 +50,9 @@ class User extends Authenticatable
     {
         return $this->hasMany(AiQuotaUsage::class);
     }
+
+    public function ocrQuotaUsages(): HasMany
+    {
+        return $this->hasMany(OcrQuotaUsage::class);
+    }
 }

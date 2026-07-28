@@ -22,7 +22,7 @@ export async function buildBookPdfHtml(book: Book): Promise<string> {
     const source =
       page.aiStatus === 'done' && page.aiText.trim()
         ? ' <span class="printed">· AI</span>'
-        : ' <span class="printed">· OCR</span>';
+        : ' <span class="printed">· ze skanu</span>';
 
     return `
       <section class="page">
@@ -81,7 +81,7 @@ export async function buildBookPdfHtml(book: Book): Promise<string> {
       </head>
       <body>
         <h1>${escapeHtml(book.title)}</h1>
-        <p class="meta">Scanocx · ${book.pages.length} stron · tekst AI (lub OCR, gdy AI jeszcze nie gotowe)</p>
+        <p class="meta">Scanocx · ${book.pages.length} stron · tekst AI (lub ze skanu, gdy AI jeszcze nie gotowe)</p>
         ${pagesHtml.join('\n')}
       </body>
     </html>

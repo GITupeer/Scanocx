@@ -20,7 +20,7 @@ export function ScanQueueCard({ style }: { style?: StyleProp<ViewStyle> }) {
 
   const done = Math.min(queue.completed, queue.total);
   const detail = queue.paused
-    ? 'Wstrzymane — ruszy po wyjściu z kamery'
+    ? 'Wstrzymane'
     : queue.currentPageIndex != null
       ? `Czytam stronę ${queue.currentPageIndex}…`
       : 'Przygotowuję analizę…';

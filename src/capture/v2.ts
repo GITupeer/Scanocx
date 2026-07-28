@@ -5,7 +5,7 @@
  * - spust czeka TYLKO na takePictureAsync
  * - skipProcessing: true (bez rotacji/skalowania w natywie)
  * - mały pictureSize (~2–3 MP)
- * - crop do ramki + zapis + OCR w tle
+ * - crop do ramki + zapis; OCR odpala ekran skanowania zaraz po zdjęciu
  */
 
 import type { CameraView } from 'expo-camera';

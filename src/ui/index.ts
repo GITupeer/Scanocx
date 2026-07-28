@@ -13,6 +13,7 @@ export { Icon, type IconName } from './Icon';
 export { BusyOverlay, Loader } from './Loader';
 export { AiPulse, FadeInUp, ScanBeam } from './Motion';
 export { ProgressBar } from './Progress';
+export { AiPromoCard } from './AiPromoCard';
 export { AiQueueCard } from './AiQueueCard';
 export { ScanQueueCard } from './ScanQueueCard';
 export { SegmentedControl, type SegmentOption } from './SegmentedControl';

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Services\AiQuotaService;
+use App\Services\OcrQuotaService;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,7 +19,7 @@ use Spatie\Permission\Models\Role;
 
 class AuthController extends Controller
 {
-    public function register(Request $request, AiQuotaService $quota): JsonResponse
+    public function register(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota): JsonResponse
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
@@ -39,11 +40,11 @@ class AuthController extends Controller
 
         return response()->json([
             'token' => $token,
-            'user' => new UserResource($user, $quota->snapshot($user)),
+            'user' => new UserResource($user, $quota->snapshot($user), $ocrQuota->snapshot($user)),
         ], 201);
     }
 
-    public function login(Request $request, AiQuotaService $quota): JsonResponse
+    public function login(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota): JsonResponse
     {
         $credentials = $request->validate([
             'email' => ['required', 'email'],
@@ -62,7 +63,7 @@ class AuthController extends Controller
 
         return response()->json([
             'token' => $token,
-            'user' => new UserResource($user, $quota->snapshot($user)),
+            'user' => new UserResource($user, $quota->snapshot($user), $ocrQuota->snapshot($user)),
         ]);
     }
 
@@ -73,15 +74,15 @@ class AuthController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    public function me(Request $request, AiQuotaService $quota): UserResource
+    public function me(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota): UserResource
     {
         /** @var User $user */
         $user = $request->user();
 
-        return new UserResource($user, $quota->snapshot($user));
+        return new UserResource($user, $quota->snapshot($user), $ocrQuota->snapshot($user));
     }
 
-    public function updateProfile(Request $request, AiQuotaService $quota): UserResource
+    public function updateProfile(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota): UserResource
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
@@ -91,7 +92,7 @@ class AuthController extends Controller
         $user = $request->user();
         $user->update(['name' => $data['name']]);
 
-        return new UserResource($user->fresh(), $quota->snapshot($user));
+        return new UserResource($user->fresh(), $quota->snapshot($user), $ocrQuota->snapshot($user));
     }
 
     public function changePassword(Request $request): JsonResponse

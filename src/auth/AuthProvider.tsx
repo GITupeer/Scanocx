@@ -1,10 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
+import { resumePendingCloudAi } from '@/src/ai/queue';
+import { isApiConfigured } from '@/src/ai/config';
 import * as api from '@/src/api/endpoints';
 import { clearAuthToken, getAuthToken, setAuthToken } from '@/src/api/token';
 import type { ApiUser } from '@/src/api/types';
-import { isApiConfigured } from '@/src/ai/config';
+import { tryResumeOcrQueue } from '@/src/ocr/queue';
+import { refreshOcrQuota, setOcrPlan } from '@/src/ocr/quota';
 
 type AuthContextValue = {
   ready: boolean;
@@ -49,6 +52,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setReady(true);
     })();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!ready || user == null) return;
+    void resumePendingCloudAi().catch(() => undefined);
+  }, [ready, user?.id]);
+
+  useEffect(() => {
+    setOcrPlan(user?.plan === 'pro' ? 'pro' : 'free');
+    void refreshOcrQuota()
+      .then(() => tryResumeOcrQueue())
+      .catch(() => undefined);
+  }, [user?.plan, ready]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     const result = await api.login({ email, password });

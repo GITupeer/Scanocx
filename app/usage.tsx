@@ -7,6 +7,7 @@ import { isApiConfigured } from '@/src/ai/config';
 import * as api from '@/src/api/endpoints';
 import { ApiError, type AiUsageItem } from '@/src/api/types';
 import { useAuth } from '@/src/auth/AuthProvider';
+import { FREE_OCR_MONTHLY_LIMIT, refreshOcrQuota, useOcrQuota } from '@/src/ocr/quota';
 import {
   AppBar,
   AuroraBackdrop,
@@ -80,6 +81,7 @@ export default function UsageScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { user, ready, isLoggedIn, refresh } = useAuth();
+  const ocrQuota = useOcrQuota();
 
   const [items, setItems] = useState<AiUsageItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,6 +101,7 @@ export default function UsageScreen() {
     setLoading(true);
     try {
       await refresh();
+      await refreshOcrQuota();
       const result = await api.fetchAiUsage();
       setItems(result.data);
     } catch (error) {
@@ -139,7 +142,39 @@ export default function UsageScreen() {
         ]}>
         <Card style={styles.quotaCard}>
           <View style={styles.quotaTop}>
-            <Text style={styles.quotaTitle}>Limit w okresie</Text>
+            <Text style={styles.quotaTitle}>OCR w tym miesiącu</Text>
+            <Badge
+              label={planLabel(user?.plan)}
+              tone={user?.plan === 'pro' ? 'success' : 'primary'}
+              icon={user?.plan === 'pro' ? 'bolt' : 'ai'}
+            />
+          </View>
+          {ocrQuota.unlimited ? (
+            <Text style={styles.quotaValue}>Nielimitowane</Text>
+          ) : (
+            <>
+              <Text style={styles.quotaValue}>
+                {ocrQuota.remaining} z {ocrQuota.limit ?? FREE_OCR_MONTHLY_LIMIT} odczytów
+              </Text>
+              <Text style={styles.quotaHint}>
+                {ocrQuota.used} zużyte · zdjęcia bez limitu · limit odnawia się co miesiąc
+              </Text>
+              <ProgressBar
+                value={
+                  ocrQuota.limit != null && ocrQuota.limit > 0
+                    ? Math.max(0, Math.min(1, ocrQuota.used / ocrQuota.limit))
+                    : 0
+                }
+                height={6}
+                style={styles.quotaBar}
+              />
+            </>
+          )}
+        </Card>
+
+        <Card style={styles.quotaCard}>
+          <View style={styles.quotaTop}>
+            <Text style={styles.quotaTitle}>Limit AI w okresie</Text>
             <Badge
               label={planLabel(user?.plan)}
               tone={user?.plan === 'pro' ? 'success' : 'primary'}

@@ -1,0 +1,112 @@
+import { StyleSheet, Text, View } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
+
+import { pages as pagesLabel, plural } from '@/src/utils/format';
+
+import { Button } from './Button';
+import { Gradient } from './Gradient';
+import { Icon } from './Icon';
+import { colors, font, gradients, radius, shadow, space } from './theme';
+
+type Props = {
+  count: number;
+  onPress: () => void;
+  disabled?: boolean;
+  style?: StyleProp<ViewStyle>;
+};
+
+/**
+ * Zachęta do uruchomienia korekty AI, gdy książka ma strony z OCR bez poprawki.
+ */
+export function AiPromoCard({ count, onPress, disabled, style }: Props) {
+  if (count <= 0) return null;
+
+  const label = pagesLabel(count);
+  const ready = plural(count, 'gotowa', 'gotowe', 'gotowych');
+  const title = `${label} ${ready} do korekty AI`;
+  const detail =
+    count === 1
+      ? 'Korekta w chmurze wygładzi tekst ze skanu — literówki, układ i czytelność.'
+      : 'Uruchom korektę w chmurze — AI dopracuje odczytany tekst.';
+
+  return (
+    <View style={[styles.wrap, style]}>
+      <Gradient
+        colors={gradients.aurora}
+        fallbackColor={colors.primarySoft}
+        style={StyleSheet.absoluteFill}
+      />
+
+      <View style={styles.header}>
+        <View style={styles.iconWrap}>
+          <Icon name="ai" size={18} color={colors.primary} />
+        </View>
+
+        <View style={styles.headerText}>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.detail} numberOfLines={2}>
+            {detail}
+          </Text>
+        </View>
+
+        <Text style={styles.counter}>{count}</Text>
+      </View>
+
+      <Button
+        label="Uruchom korektę AI"
+        icon="ai"
+        size="sm"
+        onPress={onPress}
+        disabled={disabled}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: {
+    borderRadius: radius.xl,
+    padding: space.lg,
+    gap: space.md,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.line,
+    ...shadow.soft,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+  },
+  iconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  headerText: {
+    flex: 1,
+    gap: 2,
+  },
+  title: {
+    ...font.h3,
+    fontSize: 15.5,
+  },
+  detail: {
+    fontSize: 12.5,
+    fontWeight: '500',
+    color: colors.muted,
+    lineHeight: 17,
+  },
+  counter: {
+    fontSize: 19,
+    fontWeight: '800',
+    color: colors.primaryDeep,
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.5,
+  },
+});

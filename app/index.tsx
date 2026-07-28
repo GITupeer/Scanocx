@@ -1,5 +1,6 @@
-import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
 import type { Href } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -16,12 +17,22 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/auth/AuthProvider";
 import type { BookSummary } from "@/src/domain/types";
 import { useOcrQueue } from "@/src/ocr/queue";
-import { createBook, deleteBook, listBooks } from "@/src/storage/books";
+import { refreshOcrQuota, useOcrQuota } from "@/src/ocr/quota";
 import {
+  clearBookCover,
+  createBook,
+  deleteBook,
+  listBooks,
+  renameBook,
+  setBookCover,
+} from "@/src/storage/books";
+import {
+  AiQueueCard,
   AuroraBackdrop,
   Badge,
   BookCover,
   BottomNav,
+  BusyOverlay,
   Button,
   ConfirmDialog,
   Dialog,
@@ -64,6 +75,7 @@ export default function LibraryScreen() {
   const insets = useSafeAreaInsets();
   const bottomInset = useBottomNavInset();
   const queue = useOcrQueue();
+  const ocrQuota = useOcrQuota();
   const { user, isLoggedIn, ready, refresh: refreshAuth } = useAuth();
 
   const [books, setBooks] = useState<BookSummary[]>([]);
@@ -74,6 +86,10 @@ export default function LibraryScreen() {
   const [creating, setCreating] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
   const [sheetBook, setSheetBook] = useState<BookSummary | null>(null);
+  const [renameTarget, setRenameTarget] = useState<BookSummary | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
+  const [renaming, setRenaming] = useState(false);
+  const [coverBusy, setCoverBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<BookSummary | null>(null);
 
   const refresh = useCallback(async () => {
@@ -88,6 +104,7 @@ export default function LibraryScreen() {
   useFocusEffect(
     useCallback(() => {
       void refresh();
+      void refreshOcrQuota();
       if (ready && isLoggedIn) {
         void refreshAuth();
       }
@@ -117,6 +134,77 @@ export default function LibraryScreen() {
     } finally {
       setCreating(false);
     }
+  };
+
+  const openRename = (book: BookSummary) => {
+    setSheetBook(null);
+    setRenameTitle(book.title);
+    setRenameTarget(book);
+  };
+
+  const onRename = async () => {
+    const target = renameTarget;
+    if (!target) return;
+    setRenaming(true);
+    try {
+      await renameBook(target.id, renameTitle);
+      setRenameTarget(null);
+      setRenameTitle("");
+      await refresh();
+    } catch (error) {
+      Alert.alert(
+        "Błąd",
+        error instanceof Error ? error.message : "Nie udało się zmienić nazwy.",
+      );
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const pickCover = async (book: BookSummary) => {
+    setSheetBook(null);
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.9,
+      allowsEditing: true,
+      aspect: [3, 4],
+    });
+    if (result.canceled || !result.assets[0]?.uri) return;
+
+    setCoverBusy(true);
+    try {
+      await setBookCover(book.id, result.assets[0].uri);
+      await refresh();
+    } catch (error) {
+      Alert.alert(
+        "Okładka",
+        error instanceof Error
+          ? error.message
+          : "Nie udało się ustawić okładki.",
+      );
+    } finally {
+      setCoverBusy(false);
+    }
+  };
+
+  const onClearCover = (book: BookSummary) => {
+    setSheetBook(null);
+    void (async () => {
+      setCoverBusy(true);
+      try {
+        await clearBookCover(book.id);
+        await refresh();
+      } catch (error) {
+        Alert.alert(
+          "Okładka",
+          error instanceof Error
+            ? error.message
+            : "Nie udało się usunąć okładki.",
+        );
+      } finally {
+        setCoverBusy(false);
+      }
+    })();
   };
 
   const onConfirmDelete = () => {
@@ -236,14 +324,18 @@ export default function LibraryScreen() {
                       <Text style={styles.planTitle}>
                         Pakiet {planLabel(user.plan)}
                       </Text>
-                      <Text style={styles.planDetail} numberOfLines={1}>
+                      <Text style={styles.planDetail} numberOfLines={2}>
+                        {ocrQuota.unlimited
+                          ? "OCR nielimitowane"
+                          : `OCR ${ocrQuota.remaining}/${ocrQuota.limit} / miesiąc`}
+                        {" · "}
                         {user.quota
-                          ? `${user.quota.remaining} z ${user.quota.limit} stron AI / ${
+                          ? `AI ${user.quota.remaining}/${user.quota.limit} / ${
                               user.quota.period_type === "day"
                                 ? "dzień"
                                 : "miesiąc"
                             }`
-                          : "Brak danych limitu AI"}
+                          : "AI —"}
                       </Text>
                     </View>
                     <Badge
@@ -252,7 +344,18 @@ export default function LibraryScreen() {
                       icon={user.plan === "pro" ? "bolt" : "ai"}
                     />
                   </View>
-                  {user.quota && user.quota.limit > 0 ? (
+                  {!ocrQuota.unlimited &&
+                  ocrQuota.limit != null &&
+                  ocrQuota.limit > 0 ? (
+                    <ProgressBar
+                      value={Math.max(
+                        0,
+                        Math.min(1, ocrQuota.used / ocrQuota.limit),
+                      )}
+                      height={5}
+                      style={styles.planBar}
+                    />
+                  ) : user.quota && user.quota.limit > 0 ? (
                     <ProgressBar
                       value={Math.max(
                         0,
@@ -273,9 +376,10 @@ export default function LibraryScreen() {
                     <Icon name="lock" size={16} color={colors.primary} />
                   </View>
                   <View style={styles.planText}>
-                    <Text style={styles.planTitle}>Zaloguj się do AI</Text>
-                    <Text style={styles.planDetail} numberOfLines={1}>
-                      Darmowy plan: 3 strony AI / dzień
+                    <Text style={styles.planTitle}>Plan darmowy</Text>
+                    <Text style={styles.planDetail} numberOfLines={2}>
+                      OCR {ocrQuota.remaining ?? 0}/{ocrQuota.limit ?? 30} /
+                      miesiąc · zdjęcia bez limitu · AI po zalogowaniu
                     </Text>
                   </View>
                   <Icon name="chevronRight" size={16} color={colors.faint} />
@@ -284,6 +388,7 @@ export default function LibraryScreen() {
             </Pressable>
 
             <ScanQueueCard style={styles.queue} />
+            <AiQueueCard style={styles.queue} />
 
             {books.length > 2 ? (
               <SearchField
@@ -432,6 +537,35 @@ export default function LibraryScreen() {
           />
           <View style={styles.sheetDivider} />
           <Row
+            icon="edit"
+            label="Zmień nazwę"
+            onPress={() => {
+              if (sheetBook) openRename(sheetBook);
+            }}
+          />
+          <View style={styles.sheetDivider} />
+          <Row
+            icon="image"
+            label={sheetBook?.coverUri ? "Zmień okładkę" : "Dodaj okładkę"}
+            detail="Zdjęcie z galerii"
+            onPress={() => {
+              if (sheetBook) void pickCover(sheetBook);
+            }}
+          />
+          {sheetBook?.coverUri ? (
+            <>
+              <View style={styles.sheetDivider} />
+              <Row
+                icon="trash"
+                label="Usuń okładkę"
+                onPress={() => {
+                  if (sheetBook) onClearCover(sheetBook);
+                }}
+              />
+            </>
+          ) : null}
+          <View style={styles.sheetDivider} />
+          <Row
             icon="camera"
             label="Skanuj strony"
             tone="primary"
@@ -476,6 +610,41 @@ export default function LibraryScreen() {
         </SheetGroup>
       </Sheet>
 
+      <Dialog
+        visible={renameTarget != null}
+        onClose={() => setRenameTarget(null)}
+        icon="edit"
+        title="Zmień nazwę"
+        body="Nowa nazwa książki w bibliotece."
+        actions={
+          <>
+            <Button
+              label="Anuluj"
+              variant="outline"
+              onPress={() => setRenameTarget(null)}
+              style={styles.flex}
+            />
+            <Button
+              label="Zapisz"
+              icon="check"
+              loading={renaming}
+              onPress={() => void onRename()}
+              style={styles.flex}
+            />
+          </>
+        }
+      >
+        <TextField
+          value={renameTitle}
+          onChangeText={setRenameTitle}
+          placeholder="Tytuł książki"
+          icon="bookOpen"
+          autoFocus
+          returnKeyType="done"
+          onSubmitEditing={() => void onRename()}
+        />
+      </Dialog>
+
       <ConfirmDialog
         visible={deleteTarget != null}
         title="Usunąć książkę?"
@@ -488,6 +657,8 @@ export default function LibraryScreen() {
         onConfirm={onConfirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      <BusyOverlay visible={coverBusy} label="Zapisuję okładkę…" />
     </View>
   );
 }
@@ -512,7 +683,7 @@ function BookCard({
         pressed && styles.bookCardPressed,
       ]}
     >
-      <BookCover title={book.title} width={50} />
+      <BookCover title={book.title} coverUri={book.coverUri} width={50} />
 
       <View style={styles.bookText}>
         <Text numberOfLines={2} style={styles.bookTitle}>

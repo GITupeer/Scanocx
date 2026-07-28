@@ -4,6 +4,7 @@ import type { AiStatus, Book, BookPage, BookSummary, OcrStatus } from '@/src/dom
 import { ensurePortraitUri, rotateUri } from '@/src/images/ensurePortrait';
 import { createId } from '@/src/storage/id';
 import {
+  bookCoverPath,
   bookDir,
   bookMetaPath,
   bookPagesDir,
@@ -12,13 +13,29 @@ import {
 } from '@/src/storage/paths';
 
 function normalizePage(page: BookPage): BookPage {
+  const ocrStatus = page.ocrStatus ?? 'idle';
   return {
     ...page,
     ocrText: page.ocrText ?? '',
     aiText: page.aiText ?? '',
     printedPageNumber: page.printedPageNumber ?? null,
+    ocrStatus:
+      ocrStatus === 'idle' ||
+      ocrStatus === 'pending' ||
+      ocrStatus === 'done' ||
+      ocrStatus === 'error'
+        ? ocrStatus
+        : 'idle',
     aiStatus: page.aiStatus ?? 'idle',
     aiError: page.aiError ?? null,
+  };
+}
+
+function normalizeBook(book: Book): Book {
+  return {
+    ...book,
+    coverUri: book.coverUri ?? null,
+    pages: (book.pages ?? []).map(normalizePage),
   };
 }
 
@@ -40,9 +57,7 @@ async function readBook(bookId: string): Promise<Book> {
     throw new Error(`Book not found: ${bookId}`);
   }
   const raw = await FileSystem.readAsStringAsync(metaPath);
-  const book = JSON.parse(raw) as Book;
-  book.pages = (book.pages ?? []).map(normalizePage);
-  return book;
+  return normalizeBook(JSON.parse(raw) as Book);
 }
 
 async function writeBook(book: Book): Promise<Book> {
@@ -67,6 +82,7 @@ export async function listBooks(): Promise<BookSummary[]> {
       books.push({
         id: book.id,
         title: book.title,
+        coverUri: book.coverUri,
         createdAt: book.createdAt,
         updatedAt: book.updatedAt,
         pageCount: book.pages.length,
@@ -88,6 +104,7 @@ export async function createBook(title: string): Promise<Book> {
   const book: Book = {
     id: createId('book'),
     title: title.trim() || 'Bez tytułu',
+    coverUri: null,
     createdAt: now,
     updatedAt: now,
     pages: [],
@@ -98,6 +115,30 @@ export async function createBook(title: string): Promise<Book> {
 export async function renameBook(bookId: string, title: string): Promise<Book> {
   const book = await readBook(bookId);
   book.title = title.trim() || book.title;
+  return writeBook(book);
+}
+
+/** Kopiuje zdjęcie jako okładkę książki (lokalny JPEG). */
+export async function setBookCover(bookId: string, sourceUri: string): Promise<Book> {
+  const book = await readBook(bookId);
+  await ensureDir(bookDir(bookId));
+
+  if (book.coverUri) {
+    await FileSystem.deleteAsync(book.coverUri, { idempotent: true });
+  }
+
+  const dest = bookCoverPath(bookId);
+  await FileSystem.copyAsync({ from: sourceUri, to: dest });
+  book.coverUri = dest;
+  return writeBook(book);
+}
+
+export async function clearBookCover(bookId: string): Promise<Book> {
+  const book = await readBook(bookId);
+  if (book.coverUri) {
+    await FileSystem.deleteAsync(book.coverUri, { idempotent: true });
+  }
+  book.coverUri = null;
   return writeBook(book);
 }
 
@@ -134,7 +175,7 @@ export async function addPageFromImage(
     ocrText: '',
     ...freshAiFields(),
     printedPageNumber: null,
-    ocrStatus: 'pending',
+    ocrStatus: 'idle',
     createdAt: new Date().toISOString(),
   };
 
@@ -145,7 +186,7 @@ export async function addPageFromImage(
 
 /**
  * Capture v2: sam copy pliku kamery → meta. Zero ImageManipulator.
- * Orientację / OCR ogarnia późniejszy runPageOcr.
+ * Orientację / OCR ogarnia późniejszy runPageOcr (gdy limit na to pozwala).
  */
 export async function addPageFromCameraUri(
   bookId: string,
@@ -165,7 +206,7 @@ export async function addPageFromCameraUri(
     ocrText: '',
     ...freshAiFields(),
     printedPageNumber: null,
-    ocrStatus: 'pending',
+    ocrStatus: 'idle',
     createdAt: new Date().toISOString(),
   };
 
@@ -308,7 +349,7 @@ export async function replacePageImage(
     ocrText: '',
     ...freshAiFields(),
     printedPageNumber: null,
-    ocrStatus: 'pending',
+    ocrStatus: 'idle',
   };
 
   book.pages = book.pages.map((p) => (p.id === pageId ? page : p));
@@ -343,7 +384,7 @@ export async function replacePageFromCameraUri(
     ocrText: '',
     ...freshAiFields(),
     printedPageNumber: null,
-    ocrStatus: 'pending',
+    ocrStatus: 'idle',
   };
 
   book.pages = book.pages.map((p) => (p.id === pageId ? page : p));

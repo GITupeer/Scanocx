@@ -89,8 +89,8 @@ export default function ExportScreen() {
           </View>
           <Text style={styles.heroTitle}>PDF z tekstem AI</Text>
           <Text style={styles.heroBody}>
-            Plik powstaje lokalnie i zawiera tekst stron (preferuje korektę AI, inaczej OCR) — bez
-            zdjęć, więc jest lekki i można go przeszukiwać.
+            Plik powstaje lokalnie i zawiera tekst stron (preferuje korektę AI, inaczej tekst ze skanu)
+            — bez zdjęć, więc jest lekki i można go przeszukiwać.
           </Text>
         </Gradient>
 
@@ -110,11 +110,21 @@ export default function ExportScreen() {
         <Card padded={false}>
           <Row icon="notes" label="Strony" detail={pagesLabel(book.pages.length)} value={String(book.pages.length)} />
           <Divider inset={space.lg + 36 + space.md} />
-          <Row icon="check" label="Gotowy tekst" detail="Strony z rozpoznanym OCR" value={String(ready)} />
+          <Row
+            icon="check"
+            label="Gotowy tekst"
+            detail="Strony z odczytanym tekstem"
+            value={String(ready)}
+          />
           <Divider inset={space.lg + 36 + space.md} />
           <Row icon="ai" label="W analizie" value={String(pending)} />
           <Divider inset={space.lg + 36 + space.md} />
-          <Row icon="alert" label="Błędy OCR" tone={errors > 0 ? 'danger' : 'default'} value={String(errors)} />
+          <Row
+            icon="alert"
+            label="Błędy odczytu"
+            tone={errors > 0 ? 'danger' : 'default'}
+            value={String(errors)}
+          />
         </Card>
 
         {lastUri ? (

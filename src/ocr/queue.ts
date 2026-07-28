@@ -1,15 +1,16 @@
 /**
  * Globalna kolejka OCR.
  *
- * Rozpoznawanie jednej strony blokuje wątek JS na 1-3 s, więc nie może lecieć
- * w trakcie robienia zdjęć. Ekran kamery wstrzymuje kolejkę na czas sesji
- * (`holdOcrQueue`) i zwalnia ją przy wyjściu (`releaseOcrQueue`).
+ * Rozpoznawanie jednej strony blokuje wątek JS na 1–3 s. Ekran skanowania
+ * czeka na OCR bieżącego zdjęcia (runPageOcrExclusive) zanim pozwoli na
+ * kolejne. Ta kolejka obsługuje batchowe / ręczne zlecenia z innych ekranów.
  *
  * Kolejka jest jednowątkowa — dzięki temu równoległe zapisy do meta.json
  * nie nadpisują się wzajemnie.
  */
 import { useSyncExternalStore } from 'react';
 
+import { canRunOcr } from '@/src/ocr/quota';
 import { runPageOcr, type RunPageOcrOptions } from '@/src/ocr/recognize';
 import { withBookMetaLock } from '@/src/storage/lock';
 
@@ -126,6 +127,12 @@ async function pump(): Promise<void> {
       const job = waiting.shift();
       if (!job) break;
 
+      // Brak limitu OCR — zostaw zlecenie w kolejce, wznów gdy pojawi się zapas / Pro.
+      if (!(await canRunOcr())) {
+        waiting.unshift(job);
+        break;
+      }
+
       current = job;
       publish();
 
@@ -173,7 +180,7 @@ export function enqueueOcrJobs(jobs: OcrQueueJob[]): number {
   return jobs.filter((job) => enqueueOcr(job)).length;
 }
 
-/** Wstrzymuje kolejkę po zakończeniu bieżącej strony (na czas sesji zdjęć). */
+/** Wstrzymuje kolejkę po zakończeniu bieżącej strony. */
 export function holdOcrQueue(): void {
   if (paused) return;
   paused = true;
@@ -184,6 +191,13 @@ export function holdOcrQueue(): void {
 export function releaseOcrQueue(): void {
   paused = false;
   publish();
+  void pump();
+}
+
+/** Wznawia pump, gdy w kolejce są zlecenia i wrócił zapas limitu OCR. */
+export async function tryResumeOcrQueue(): Promise<void> {
+  if (paused || pumping || waiting.length === 0) return;
+  if (!(await canRunOcr())) return;
   void pump();
 }
 

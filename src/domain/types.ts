@@ -1,4 +1,5 @@
-export type OcrStatus = 'pending' | 'done' | 'error';
+/** idle = zdjęcie bez OCR (limit / celowo); pending = w toku; done / error = wynik. */
+export type OcrStatus = 'idle' | 'pending' | 'done' | 'error';
 
 /** Stan korekty Gemini: idle = jeszcze nie uruchomiona / unieważniona. */
 export type AiStatus = 'idle' | 'pending' | 'done' | 'error';
@@ -23,6 +24,8 @@ export type BookPage = {
 export type Book = {
   id: string;
   title: string;
+  /** Lokalna ścieżka JPEG okładki; null gdy brak własnego zdjęcia. */
+  coverUri: string | null;
   createdAt: string;
   updatedAt: string;
   pages: BookPage[];
@@ -31,6 +34,7 @@ export type Book = {
 export type BookSummary = {
   id: string;
   title: string;
+  coverUri: string | null;
   createdAt: string;
   updatedAt: string;
   pageCount: number;

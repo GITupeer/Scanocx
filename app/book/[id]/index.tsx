@@ -1,4 +1,5 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
@@ -19,9 +20,9 @@ import {
   cancelAiForBook,
   cancelAiForPage,
   enqueuePendingAiForBook,
+  resumePendingCloudAi,
   useAiQueue,
 } from '@/src/ai/queue';
-import { ApiError } from '@/src/api/types';
 import { useAuth } from '@/src/auth/AuthProvider';
 import type { Book, BookPage } from '@/src/domain/types';
 import {
@@ -29,15 +30,28 @@ import {
   cancelOcrForPage,
   enqueueOcrJobs,
   runPageOcrExclusive,
+  tryResumeOcrQueue,
   useOcrQueue,
 } from '@/src/ocr/queue';
-import { deleteBook, deletePage, getBook, rotatePageImage180 } from '@/src/storage/books';
+import { getOcrRemaining, OcrQuotaExceededError } from '@/src/ocr/quota';
 import {
+  clearBookCover,
+  deleteBook,
+  deletePage,
+  getBook,
+  renameBook,
+  rotatePageImage180,
+  setBookCover,
+} from '@/src/storage/books';
+import {
+  AiPromoCard,
   AiQueueCard,
   AiStatusBadge,
   AppBar,
   BusyOverlay,
+  Button,
   ConfirmDialog,
+  Dialog,
   EmptyState,
   Gradient,
   Icon,
@@ -48,6 +62,7 @@ import {
   SegmentedControl,
   Sheet,
   SheetGroup,
+  TextField,
   colors,
   font,
   gradients,
@@ -78,12 +93,15 @@ const VIEW_MODES = [
 ] as const satisfies readonly { id: ViewMode; label: string }[];
 
 function ocrOverlayCopy(page: BookPage): string {
-  if (page.ocrStatus === 'pending') return 'Analiza OCR w toku…';
+  if (page.ocrStatus === 'pending') return 'Odczytywanie tekstu…';
+  if (page.ocrStatus === 'idle') {
+    return 'Zdjęcie zapisane — uruchom odczyt tekstu, gdy będziesz gotowy.';
+  }
   if (page.aiStatus === 'pending') return 'Korekta AI w toku…';
   if (page.aiStatus === 'error') {
     return page.aiError?.trim() || 'Błąd korekty AI.';
   }
-  if (page.ocrStatus === 'error') return 'Błąd OCR — brak tekstu do porównania.';
+  if (page.ocrStatus === 'error') return 'Nie udało się odczytać tekstu z tej strony.';
   const text = getDisplayText(page).trim();
   return text.length > 0 ? text : 'Brak rozpoznanego tekstu.';
 }
@@ -100,6 +118,9 @@ export default function BookDetailScreen() {
   const [menuPage, setMenuPage] = useState<BookPage | null>(null);
   const [bookMenu, setBookMenu] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [renaming, setRenaming] = useState(false);
   const [deleteBookOpen, setDeleteBookOpen] = useState(false);
   const [deletePageTarget, setDeletePageTarget] = useState<BookPage | null>(null);
   const ocrQueue = useOcrQueue();
@@ -142,21 +163,38 @@ export default function BookDetailScreen() {
   }, [aiQueue.completed, ocrQueue.completed, refresh]);
 
   // Strony, których analiza nie zdążyła się wykonać (np. apka zamknięta w trakcie),
-  // wracają do kolejki. Duplikaty odrzuca sama kolejka.
+  // wracają do kolejki — tylko w limicie OCR (free: 30/mies.). Duplikaty odrzuca kolejka.
   useEffect(() => {
     if (!book || actionBusy) return;
     const unprocessed = book.pages.filter((page) => page.ocrStatus === 'pending');
-    if (unprocessed.length === 0) return;
+    if (unprocessed.length === 0) {
+      void tryResumeOcrQueue();
+      return;
+    }
 
-    enqueueOcrJobs(
-      unprocessed.map((page) => ({
+    void (async () => {
+      const remaining = await getOcrRemaining();
+      const jobs = unprocessed.map((page) => ({
         bookId: book.id,
         pageId: page.id,
         pageIndex: page.index,
         imageUri: page.imageUri,
-      }))
-    );
+      }));
+      const allowed = remaining == null ? jobs : jobs.slice(0, remaining);
+      if (allowed.length > 0) {
+        enqueueOcrJobs(allowed);
+      }
+      await tryResumeOcrQueue();
+    })();
   }, [actionBusy, book]);
+
+  // Korekta AI jest w chmurze — po restarcie wznów polling, jeśli strony nadal czekają.
+  useEffect(() => {
+    if (!book || actionBusy || !isLoggedIn) return;
+    const pendingAi = book.pages.some((page) => page.aiStatus === 'pending');
+    if (!pendingAi) return;
+    void resumePendingCloudAi(book.id);
+  }, [actionBusy, book, isLoggedIn]);
 
   const pagesNewestFirst = useMemo(() => {
     if (!book) return [];
@@ -179,52 +217,16 @@ export default function BookDetailScreen() {
 
   const onRunBookAi = useCallback(() => {
     if (!book) return;
-    if (!isApiConfigured()) {
-      Alert.alert('AI', 'Brak EXPO_PUBLIC_API_BASE_URL w konfiguracji.');
-      return;
-    }
+    if (!isApiConfigured()) return;
     if (!isLoggedIn) {
-      Alert.alert('AI', 'Zaloguj się, aby uruchomić korektę AI.', [
-        { text: 'Anuluj', style: 'cancel' },
-        { text: 'Zaloguj', onPress: () => router.push('/login') },
-      ]);
+      router.push('/login');
       return;
     }
     const waiting = book.pages.filter(needsAiRewrite).length;
-    if (waiting === 0) {
-      Alert.alert('Korekta AI', 'Wszystkie strony z tekstem OCR mają już korektę AI.');
-      return;
-    }
-    void (async () => {
-      try {
-        const queued = await enqueuePendingAiForBook(book.id);
-        if (queued === 0) {
-          Alert.alert('Korekta AI', 'Brak stron do kolejki (mogą już być w trakcie).');
-          return;
-        }
-        Alert.alert(
-          'Korekta AI',
-          queued === 1
-            ? 'Dodano 1 stronę do kolejki w chmurze.'
-            : `Dodano ${queued} stron do kolejki AI w chmurze.`
-        );
-      } catch (error) {
-        const message =
-          error instanceof ApiError
-            ? error.message
-            : error instanceof Error
-              ? error.message
-              : 'Nie udało się uruchomić analizy.';
-        if (error instanceof ApiError && error.status === 401) {
-          Alert.alert('AI', message, [
-            { text: 'Anuluj', style: 'cancel' },
-            { text: 'Zaloguj', onPress: () => router.push('/login') },
-          ]);
-          return;
-        }
-        Alert.alert('Korekta AI', message);
-      }
-    })();
+    if (waiting === 0) return;
+    void enqueuePendingAiForBook(book.id).catch(() => {
+      // Status błędów widać w AiQueueCard / badge’ach stron.
+    });
   }, [book, isLoggedIn, router]);
 
   const openPageMenu = useCallback(
@@ -263,7 +265,14 @@ export default function BookDetailScreen() {
         await runPageOcrExclusive(book.id, page.id, page.imageUri);
         await refresh();
       } catch (error) {
-        Alert.alert('OCR', error instanceof Error ? error.message : 'Rozpoznawanie nie powiodło się.');
+        Alert.alert(
+          'Odczyt tekstu',
+          error instanceof OcrQuotaExceededError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : 'Odczytywanie tekstu nie powiodło się.',
+        );
         await refresh();
       } finally {
         setActionBusy(false);
@@ -279,7 +288,16 @@ export default function BookDetailScreen() {
     void (async () => {
       try {
         const { page: rotated } = await rotatePageImage180(book.id, page.id);
-        await runPageOcrExclusive(book.id, rotated.id, rotated.imageUri, { detectUpright: false });
+        try {
+          await runPageOcrExclusive(book.id, rotated.id, rotated.imageUri, { detectUpright: false });
+        } catch (error) {
+          if (error instanceof OcrQuotaExceededError) {
+            Alert.alert('Obrócono', error.message);
+            await refresh();
+            return;
+          }
+          throw error;
+        }
         await refresh();
       } catch (error) {
         Alert.alert('Obrót', error instanceof Error ? error.message : 'Nie udało się obrócić strony.');
@@ -319,6 +337,78 @@ export default function BookDetailScreen() {
       router.replace('/');
     })();
   }, [book, router]);
+
+  const openRename = useCallback(() => {
+    if (!book) return;
+    setBookMenu(false);
+    setRenameTitle(book.title);
+    setRenameOpen(true);
+  }, [book]);
+
+  const onRename = useCallback(() => {
+    if (!book) return;
+    setRenaming(true);
+    void (async () => {
+      try {
+        const updated = await renameBook(book.id, renameTitle);
+        setBook(updated);
+        setRenameOpen(false);
+      } catch (error) {
+        Alert.alert(
+          'Nazwa',
+          error instanceof Error ? error.message : 'Nie udało się zmienić nazwy.'
+        );
+      } finally {
+        setRenaming(false);
+      }
+    })();
+  }, [book, renameTitle]);
+
+  const onPickCover = useCallback(() => {
+    if (!book) return;
+    setBookMenu(false);
+    void (async () => {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.9,
+        allowsEditing: true,
+        aspect: [3, 4],
+      });
+      if (result.canceled || !result.assets[0]?.uri) return;
+
+      setActionBusy(true);
+      try {
+        const updated = await setBookCover(book.id, result.assets[0].uri);
+        setBook(updated);
+      } catch (error) {
+        Alert.alert(
+          'Okładka',
+          error instanceof Error ? error.message : 'Nie udało się ustawić okładki.'
+        );
+      } finally {
+        setActionBusy(false);
+      }
+    })();
+  }, [book]);
+
+  const onClearCover = useCallback(() => {
+    if (!book) return;
+    setBookMenu(false);
+    void (async () => {
+      setActionBusy(true);
+      try {
+        const updated = await clearBookCover(book.id);
+        setBook(updated);
+      } catch (error) {
+        Alert.alert(
+          'Okładka',
+          error instanceof Error ? error.message : 'Nie udało się usunąć okładki.'
+        );
+      } finally {
+        setActionBusy(false);
+      }
+    })();
+  }, [book]);
 
   const renderCardsPage = useCallback(
     ({ item }: { item: BookPage }) => (
@@ -361,7 +451,7 @@ export default function BookDetailScreen() {
                     ? 'Błąd AI'
                     : item.aiStatus === 'done'
                       ? 'Tekst AI'
-                      : 'Tekst OCR'}
+                      : 'Tekst ze skanu'}
                 </Text>
               </View>
               <ScrollView
@@ -476,13 +566,20 @@ export default function BookDetailScreen() {
           <View style={styles.feedHeader}>
             <ScanQueueCard />
             <AiQueueCard />
+            {aiQueue.total === 0 ? (
+              <AiPromoCard
+                count={aiPendingCount}
+                onPress={onRunBookAi}
+                disabled={actionBusy}
+              />
+            ) : null}
           </View>
         }
         ListEmptyComponent={
           <EmptyState
             icon="camera"
             title="Brak stron"
-            body="Zrób zdjęcie pierwszej strony — kadrowanie i OCR zrobią się same."
+            body="Zrób zdjęcie pierwszej strony — kadrowanie i odczyt tekstu zrobią się same."
             action={{
               label: 'Skanuj stronę',
               icon: 'camera',
@@ -539,7 +636,16 @@ export default function BookDetailScreen() {
         <SheetGroup>
           <Row icon="rotate" label="Obróć 180°" detail="Obraca zdjęcie i czyta je ponownie" onPress={onRotate180} />
           <SheetDivider />
-          <Row icon="ai" label="Ponowny OCR" detail="Uruchom analizę tekstu od nowa" onPress={onRetryOcr} />
+          <Row
+            icon="ai"
+            label={menuPage?.ocrStatus === 'idle' ? 'Odczytaj tekst' : 'Ponowny odczyt'}
+            detail={
+              menuPage?.ocrStatus === 'idle'
+                ? 'Uruchom OCR dla tego zdjęcia (limit free: 30/mies.)'
+                : 'Odczytaj tekst ze zdjęcia od nowa'
+            }
+            onPress={onRetryOcr}
+          />
           <SheetDivider />
           <Row icon="gallery" label="Wgraj nowe zdjęcie" onPress={onReplacePhoto} />
         </SheetGroup>
@@ -568,6 +674,21 @@ export default function BookDetailScreen() {
         eyebrow="Książka"
         title={book.title}>
         <SheetGroup>
+          <Row icon="edit" label="Zmień nazwę" onPress={openRename} />
+          <SheetDivider />
+          <Row
+            icon="image"
+            label={book.coverUri ? 'Zmień okładkę' : 'Dodaj okładkę'}
+            detail="Zdjęcie z galerii"
+            onPress={onPickCover}
+          />
+          {book.coverUri ? (
+            <>
+              <SheetDivider />
+              <Row icon="trash" label="Usuń okładkę" onPress={onClearCover} />
+            </>
+          ) : null}
+          <SheetDivider />
           <Row
             icon="camera"
             label="Skanuj strony"
@@ -594,7 +715,7 @@ export default function BookDetailScreen() {
             detail={
               aiPendingCount > 0
                 ? `${aiPendingCount} stron czeka na AI (pomija już gotowe)`
-                : 'Wszystkie strony z OCR mają już korektę AI'
+                : 'Wszystkie odczytane strony mają już korektę AI'
             }
             disabled={!hasPages || actionBusy}
             onPress={() => {
@@ -627,6 +748,40 @@ export default function BookDetailScreen() {
         </SheetGroup>
       </Sheet>
 
+      <Dialog
+        visible={renameOpen}
+        onClose={() => setRenameOpen(false)}
+        icon="edit"
+        title="Zmień nazwę"
+        body="Nowa nazwa książki w bibliotece."
+        actions={
+          <>
+            <Button
+              label="Anuluj"
+              variant="outline"
+              onPress={() => setRenameOpen(false)}
+              style={styles.dialogFlex}
+            />
+            <Button
+              label="Zapisz"
+              icon="check"
+              loading={renaming}
+              onPress={onRename}
+              style={styles.dialogFlex}
+            />
+          </>
+        }>
+        <TextField
+          value={renameTitle}
+          onChangeText={setRenameTitle}
+          placeholder="Tytuł książki"
+          icon="bookOpen"
+          autoFocus
+          returnKeyType="done"
+          onSubmitEditing={onRename}
+        />
+      </Dialog>
+
       <ConfirmDialog
         visible={deleteBookOpen}
         title="Usunąć książkę?"
@@ -649,7 +804,7 @@ export default function BookDetailScreen() {
         onCancel={() => setDeletePageTarget(null)}
       />
 
-      <BusyOverlay visible={actionBusy} label="Pracuję nad stroną…" />
+      <BusyOverlay visible={actionBusy} label="Pracuję…" />
     </View>
   );
 }
@@ -745,8 +900,10 @@ const styles = StyleSheet.create({
     gap: 1,
   },
   pageBadges: {
+    flexDirection: 'row',
+    flexShrink: 0,
+    alignItems: 'center',
     gap: 4,
-    alignItems: 'flex-end',
   },
   pageTitle: {
     ...font.h3,
@@ -811,7 +968,8 @@ const styles = StyleSheet.create({
   },
   gridBadges: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
+    alignItems: 'center',
     gap: 4,
   },
   listRow: {
@@ -942,5 +1100,8 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.line,
     marginLeft: space.lg + 36 + space.md,
+  },
+  dialogFlex: {
+    flex: 1,
   },
 });

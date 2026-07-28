@@ -4,6 +4,10 @@ import type { RecognitionResult } from 'expo-mlkit-ocr';
 import { enhanceForOcr, type EnhanceForOcrOptions } from '@/src/images/enhanceForOcr';
 import { ensurePortraitUri, rotateUri } from '@/src/images/ensurePortrait';
 import { extractPrintedPageNumber } from '@/src/ocr/extractPageNumber';
+import {
+  assertOcrAllowed,
+  releaseOcrSlot,
+} from '@/src/ocr/quota';
 import { pickUprightWithOcr, scoreUpright } from '@/src/ocr/upright';
 import { persistPageImageFile, updatePageOcr } from '@/src/storage/books';
 
@@ -50,11 +54,18 @@ export async function runPageOcr(
   options: RunPageOcrOptions = {}
 ): Promise<string> {
   const detectUpright = options.detectUpright !== false;
-  await updatePageOcr(bookId, pageId, { ocrStatus: 'pending', resetAi: true });
+
+  // Limit free: rezerwacja przed startem — przy błędzie OCR zwalniamy slot.
+  await assertOcrAllowed();
+  let reserved = true;
 
   try {
+    await updatePageOcr(bookId, pageId, { ocrStatus: 'pending', resetAi: true });
+
     if (!isOcrAvailable()) {
-      throw new Error('OCR nie jest dostępne na tym urządzeniu. Wymagany jest development build z ML Kit.');
+      throw new Error(
+        'Odczytywanie tekstu nie jest dostępne na tym urządzeniu. Wymagany jest development build z ML Kit.',
+      );
     }
 
     const portraitUri = await ensurePortraitUri(imageUri);
@@ -84,8 +95,12 @@ export async function runPageOcr(
       resetAi: true,
     });
 
+    reserved = false;
     return cleanedText;
   } catch (error) {
+    if (reserved) {
+      await releaseOcrSlot().catch(() => undefined);
+    }
     await updatePageOcr(bookId, pageId, { ocrStatus: 'error', resetAi: false });
     throw error;
   }

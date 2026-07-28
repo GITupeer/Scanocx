@@ -54,9 +54,10 @@ export function Badge({ label, tone = 'neutral', icon, size = 'sm', style }: Pro
 }
 
 const OCR_BADGE: Record<OcrStatus, { label: string; tone: BadgeTone; icon: IconName }> = {
-  pending: { label: 'OCR…', tone: 'primary', icon: 'ai' },
-  done: { label: 'OCR', tone: 'success', icon: 'check' },
-  error: { label: 'Błąd OCR', tone: 'danger', icon: 'alert' },
+  idle: { label: 'Bez OCR', tone: 'neutral', icon: 'pending' },
+  pending: { label: 'Czytam…', tone: 'primary', icon: 'ai' },
+  done: { label: 'Odczytany', tone: 'success', icon: 'check' },
+  error: { label: 'Błąd odczytu', tone: 'danger', icon: 'alert' },
 };
 
 export function OcrStatusBadge({

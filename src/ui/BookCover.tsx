@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 
 import { Gradient } from './Gradient';
@@ -31,24 +31,39 @@ function initials(title: string): string {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
-/** Zastępcza okładka książki: gradient dobrany z tytułu + inicjały. */
+/** Okładka książki: własne zdjęcie albo gradient z inicjałami. */
 export function BookCover({
   title,
+  coverUri,
   width = 52,
   style,
 }: {
   title: string;
+  coverUri?: string | null;
   width?: number;
   style?: StyleProp<ViewStyle>;
 }) {
-  const gradient = COVERS[hash(title) % COVERS.length];
   const height = Math.round(width * 1.34);
+  const borderRadius = Math.max(8, Math.round(width * 0.22));
+
+  if (coverUri) {
+    return (
+      <View style={[{ width, height }, style]}>
+        <Image
+          source={{ uri: coverUri }}
+          style={[styles.photo, { borderRadius }]}
+          resizeMode="cover"
+          accessibilityLabel={`Okładka: ${title}`}
+        />
+      </View>
+    );
+  }
+
+  const gradient = COVERS[hash(title) % COVERS.length];
 
   return (
     <View style={[{ width, height }, style]}>
-      <Gradient
-        colors={gradient}
-        style={[styles.cover, { borderRadius: Math.max(8, Math.round(width * 0.22)) }]}>
+      <Gradient colors={gradient} style={[styles.cover, { borderRadius }]}>
         <View style={styles.spine} />
         <Text
           allowFontScaling={false}
@@ -66,6 +81,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
+  },
+  photo: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: colors.surfaceMuted,
   },
   spine: {
     position: 'absolute',
