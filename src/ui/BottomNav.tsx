@@ -2,15 +2,10 @@ import { useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Icon, type IconName } from './Icon';
+import { Icon } from './Icon';
 import { BOTTOM_NAV_HEIGHT, colors, radius, shadow, space } from './theme';
 
-export type NavTab = 'library' | 'menu';
-
-const TABS: { key: NavTab; label: string; icon: IconName; href: '/' | '/menu' }[] = [
-  { key: 'library', label: 'Biblioteka', icon: 'library', href: '/' },
-  { key: 'menu', label: 'Menu', icon: 'tune', href: '/menu' },
-];
+export type NavTab = 'library';
 
 const FAB_SIZE = 48;
 /** Lekki odstęp między paskiem a home indicator / dolną krawędzią. */
@@ -37,13 +32,23 @@ export function BottomNav({ active, onScan, scanBadge }: Props) {
       pointerEvents="box-none"
       style={[styles.wrap, { paddingBottom: insets.bottom + BOTTOM_GAP }]}>
       <View style={styles.bar}>
-        <TabButton
-          tab={TABS[0]}
-          active={active === TABS[0].key}
+        <Pressable
+          accessibilityRole="tab"
+          accessibilityState={{ selected: active === 'library' }}
+          accessibilityLabel="Biblioteka"
           onPress={() => {
-            if (active !== TABS[0].key) router.replace(TABS[0].href);
+            if (active !== 'library') router.replace('/');
           }}
-        />
+          style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}>
+          <Icon
+            name="library"
+            size={22}
+            color={active === 'library' ? colors.primary : colors.inkSoft}
+          />
+          <Text style={[styles.tabLabel, active === 'library' && styles.tabLabelActive]}>
+            Biblioteka
+          </Text>
+        </Pressable>
 
         <Pressable
           accessibilityRole="button"
@@ -60,37 +65,10 @@ export function BottomNav({ active, onScan, scanBadge }: Props) {
           ) : null}
         </Pressable>
 
-        <TabButton
-          tab={TABS[1]}
-          active={active === TABS[1].key}
-          onPress={() => {
-            if (active !== TABS[1].key) router.replace(TABS[1].href);
-          }}
-        />
+        {/* Pusty slot — zachowuje symetrię paska bez drugiej zakładki. */}
+        <View style={styles.tab} pointerEvents="none" />
       </View>
     </View>
-  );
-}
-
-function TabButton({
-  tab,
-  active,
-  onPress,
-}: {
-  tab: (typeof TABS)[number];
-  active: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="tab"
-      accessibilityState={{ selected: active }}
-      accessibilityLabel={tab.label}
-      onPress={onPress}
-      style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}>
-      <Icon name={tab.icon} size={22} color={active ? colors.primary : colors.inkSoft} />
-      <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{tab.label}</Text>
-    </Pressable>
   );
 }
 

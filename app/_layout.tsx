@@ -27,11 +27,12 @@ export default function RootLayout() {
             animation: 'slide_from_right',
           }}>
           <Stack.Screen name="index" options={{ animation: 'fade' }} />
-          <Stack.Screen name="menu" options={{ animation: 'fade' }} />
           <Stack.Screen name="login" />
           <Stack.Screen name="register" />
           <Stack.Screen name="forgot-password" />
           <Stack.Screen name="reset-password" />
+          <Stack.Screen name="profile" />
+          <Stack.Screen name="usage" />
           <Stack.Screen name="admin/users" />
           <Stack.Screen name="book/[id]/index" />
           <Stack.Screen name="book/[id]/capture" options={{ animation: 'fade_from_bottom' }} />

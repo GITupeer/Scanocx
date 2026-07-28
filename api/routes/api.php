@@ -13,8 +13,11 @@ Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/me', [AuthController::class, 'me']);
+    Route::patch('/me', [AuthController::class, 'updateProfile']);
+    Route::post('/change-password', [AuthController::class, 'changePassword']);
 
     Route::get('/ai/quota', [AiController::class, 'quota']);
+    Route::get('/ai/usage', [AiController::class, 'usage']);
     Route::post('/ai/analyze', [AiController::class, 'analyze']);
     Route::get('/ai/batches/{id}', [AiController::class, 'batch']);
 

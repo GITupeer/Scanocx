@@ -44,6 +44,24 @@ export type AiBatch = {
   jobs: AiBatchJob[];
 };
 
+export type AiUsagePage = {
+  page_index: number | null;
+  status: string;
+};
+
+export type AiUsageItem = {
+  id: number;
+  status: string;
+  book_title: string | null;
+  book_local_id: string | null;
+  total: number;
+  completed: number;
+  failed: number;
+  created_at: string | null;
+  updated_at: string | null;
+  pages: AiUsagePage[];
+};
+
 export class ApiError extends Error {
   constructor(
     message: string,

@@ -54,6 +54,7 @@ const ICONS = {
   eye: { ios: 'eye.fill', android: 'visibility', glyph: '◉' },
   eyeOff: { ios: 'eye.slash.fill', android: 'visibility_off', glyph: '◍' },
   lock: { ios: 'lock.fill', android: 'lock', glyph: '▮' },
+  user: { ios: 'person.fill', android: 'person', glyph: '☺' },
   shield: { ios: 'lock.shield.fill', android: 'shield', glyph: '⛨' },
   storage: { ios: 'internaldrive.fill', android: 'storage', glyph: '▤' },
   tips: { ios: 'lightbulb.fill', android: 'tips_and_updates', glyph: '✦' },

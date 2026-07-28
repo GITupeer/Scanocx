@@ -1,5 +1,5 @@
 import { apiRequest } from '@/src/api/client';
-import type { AiBatch, AiQuota, ApiUser, AuthResponse } from '@/src/api/types';
+import type { AiBatch, AiQuota, AiUsageItem, ApiUser, AuthResponse } from '@/src/api/types';
 
 export function register(input: {
   name: string;
@@ -30,6 +30,24 @@ export function fetchMe(): Promise<ApiUser> {
   return apiRequest<ApiUser>('/api/me');
 }
 
+export function updateProfile(input: { name: string }): Promise<ApiUser> {
+  return apiRequest<ApiUser>('/api/me', {
+    method: 'PATCH',
+    body: input,
+  });
+}
+
+export function changePassword(input: {
+  current_password: string;
+  password: string;
+  password_confirmation: string;
+}): Promise<{ message: string }> {
+  return apiRequest<{ message: string }>('/api/change-password', {
+    method: 'POST',
+    body: input,
+  });
+}
+
 export function forgotPassword(email: string): Promise<{ message: string }> {
   return apiRequest<{ message: string }>('/api/forgot-password', {
     method: 'POST',
@@ -53,6 +71,10 @@ export function resetPassword(input: {
 
 export function fetchQuota(): Promise<AiQuota> {
   return apiRequest<AiQuota>('/api/ai/quota');
+}
+
+export function fetchAiUsage(): Promise<{ data: AiUsageItem[] }> {
+  return apiRequest<{ data: AiUsageItem[] }>('/api/ai/usage');
 }
 
 export function analyzeBook(input: {

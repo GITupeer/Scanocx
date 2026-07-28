@@ -42,7 +42,7 @@ export default function RegisterScreen() {
     setLoading(true);
     try {
       await signUp(name.trim(), email.trim(), password);
-      router.replace('/menu');
+      router.replace('/');
     } catch (error) {
       const message = error instanceof ApiError ? error.message : 'Nie udało się zarejestrować.';
       Alert.alert('Rejestracja', message);

@@ -25,6 +25,43 @@ class AiController extends Controller
         return response()->json($quota->snapshot($user));
     }
 
+    public function usage(Request $request): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        $batches = AiBatch::query()
+            ->with(['book', 'jobs.page'])
+            ->where('user_id', $user->id)
+            ->orderByDesc('created_at')
+            ->limit(50)
+            ->get();
+
+        return response()->json([
+            'data' => $batches->map(function (AiBatch $batch) {
+                $jobs = $batch->jobs->sortBy('id')->values();
+
+                return [
+                    'id' => $batch->id,
+                    'status' => $batch->status,
+                    'book_title' => $batch->book?->title,
+                    'book_local_id' => $batch->book?->local_id,
+                    'total' => $batch->total_jobs,
+                    'completed' => $batch->completed_jobs,
+                    'failed' => $batch->failed_jobs,
+                    'created_at' => optional($batch->created_at)?->toIso8601String(),
+                    'updated_at' => optional($batch->updated_at)?->toIso8601String(),
+                    'pages' => $jobs->map(function (AiJob $job) {
+                        return [
+                            'page_index' => $job->page?->index,
+                            'status' => $job->status,
+                        ];
+                    })->all(),
+                ];
+            })->all(),
+        ]);
+    }
+
     public function analyze(Request $request, AiQuotaService $quota): JsonResponse
     {
         /** @var User $user */

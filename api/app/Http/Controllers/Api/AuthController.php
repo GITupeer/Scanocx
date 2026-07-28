@@ -81,6 +81,40 @@ class AuthController extends Controller
         return new UserResource($user, $quota->snapshot($user));
     }
 
+    public function updateProfile(Request $request, AiQuotaService $quota): UserResource
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:120'],
+        ]);
+
+        /** @var User $user */
+        $user = $request->user();
+        $user->update(['name' => $data['name']]);
+
+        return new UserResource($user->fresh(), $quota->snapshot($user));
+    }
+
+    public function changePassword(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'current_password' => ['required', 'string'],
+            'password' => ['required', 'confirmed', Rules\Password::defaults()],
+        ]);
+
+        /** @var User $user */
+        $user = $request->user();
+
+        if (! Hash::check($data['current_password'], $user->password)) {
+            throw ValidationException::withMessages([
+                'current_password' => ['Nieprawidłowe obecne hasło.'],
+            ]);
+        }
+
+        $user->update(['password' => $data['password']]);
+
+        return response()->json(['message' => 'Hasło zostało zmienione.']);
+    }
+
     public function forgotPassword(Request $request): JsonResponse
     {
         $request->validate(['email' => ['required', 'email']]);

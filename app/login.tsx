@@ -44,7 +44,7 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       await signIn(email.trim(), password);
-      router.replace('/menu');
+      router.replace('/');
     } catch (error) {
       const message = error instanceof ApiError ? error.message : 'Nie udało się zalogować.';
       Alert.alert('Logowanie', message);

@@ -46,7 +46,7 @@ export default function AdminUsersScreen() {
     useCallback(() => {
       if (!ready) return;
       if (!isAdmin) {
-        router.replace('/menu');
+        router.replace('/');
         return;
       }
       void load();
