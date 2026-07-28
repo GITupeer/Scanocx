@@ -19,6 +19,7 @@ import { getDisplayText, needsAiRewrite } from '@/src/ai/displayText';
 import {
   cancelAiForBook,
   cancelAiForPage,
+  clearAiQuotaErrorsForBook,
   enqueuePendingAiForBook,
   resumePendingCloudAi,
   useAiQueue,
@@ -33,7 +34,12 @@ import {
   tryResumeOcrQueue,
   useOcrQueue,
 } from '@/src/ocr/queue';
-import { getOcrRemaining, OcrAuthRequiredError, OcrQuotaExceededError } from '@/src/ocr/quota';
+import {
+  getOcrRemaining,
+  OcrAuthRequiredError,
+  OcrQuotaExceededError,
+  useOcrQuota,
+} from '@/src/ocr/quota';
 import {
   clearBookCover,
   deleteBook,
@@ -44,12 +50,14 @@ import {
   setBookCover,
 } from '@/src/storage/books';
 import {
+  AiLimitPromoCard,
   AiPromoCard,
   AiQueueCard,
   AiStatusBadge,
   AppBar,
   BusyOverlay,
   Button,
+  OcrPromoCard,
   ConfirmDialog,
   Dialog,
   EmptyState,
@@ -110,7 +118,7 @@ export default function BookDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, user, refresh: refreshAuth } = useAuth();
   const [book, setBook] = useState<Book | null>(null);
   const [loading, setLoading] = useState(true);
   const [showOcr, setShowOcr] = useState(false);
@@ -124,6 +132,7 @@ export default function BookDetailScreen() {
   const [deleteBookOpen, setDeleteBookOpen] = useState(false);
   const [deletePageTarget, setDeletePageTarget] = useState<BookPage | null>(null);
   const ocrQueue = useOcrQueue();
+  const ocrQuota = useOcrQuota();
   const aiQueue = useAiQueue();
 
   const refresh = useCallback(async () => {
@@ -143,7 +152,8 @@ export default function BookDetailScreen() {
   useFocusEffect(
     useCallback(() => {
       void refresh();
-    }, [refresh])
+      if (isLoggedIn) void refreshAuth();
+    }, [isLoggedIn, refresh, refreshAuth])
   );
 
   // Każda strona zamknięta przez kolejkę zmienia meta.json — przeczytaj je ponownie,
@@ -160,7 +170,10 @@ export default function BookDetailScreen() {
     lastOcrCompletedRef.current = ocrQueue.completed;
     lastAiCompletedRef.current = aiQueue.completed;
     void refresh();
-  }, [aiQueue.completed, ocrQueue.completed, refresh]);
+    if (aiQueue.completed > 0) {
+      void refreshAuth();
+    }
+  }, [aiQueue.completed, ocrQueue.completed, refresh, refreshAuth]);
 
   // Strony, których analiza nie zdążyła się wykonać (np. apka zamknięta w trakcie),
   // wracają do kolejki — tylko dla zalogowanych, w limicie OCR. Duplikaty odrzuca kolejka.
@@ -196,6 +209,19 @@ export default function BookDetailScreen() {
     void resumePendingCloudAi(book.id);
   }, [actionBusy, book, isLoggedIn]);
 
+  // Stare „Przekroczono limit AI” na stronach → idle (bez błędu, promo card u góry).
+  useEffect(() => {
+    if (!book || !isLoggedIn || !id) return;
+    void clearAiQuotaErrorsForBook(book.id).then(async (changed) => {
+      if (!changed) return;
+      try {
+        setBook(await getBook(id));
+      } catch {
+        // ignore
+      }
+    });
+  }, [book?.id, id, isLoggedIn]);
+
   const pagesNewestFirst = useMemo(() => {
     if (!book) return [];
     return [...book.pages].sort((a, b) => {
@@ -210,10 +236,68 @@ export default function BookDetailScreen() {
     [book]
   );
 
+  /** Zdjęcia bez OCR (idle / błąd) — czekają na odczyt. */
+  const ocrPendingCount = useMemo(
+    () =>
+      book
+        ? book.pages.filter(
+            (page) => page.ocrStatus === 'idle' || page.ocrStatus === 'error'
+          ).length
+        : 0,
+    [book]
+  );
+
+  const showOcrPromo =
+    isLoggedIn &&
+    ocrPendingCount > 0 &&
+    ocrQueue.total === 0 &&
+    (ocrQuota.unlimited || (ocrQuota.remaining ?? 0) > 0);
+
   const aiPendingCount = useMemo(
     () => (book ? book.pages.filter(needsAiRewrite).length : 0),
     [book]
   );
+
+  const aiRemaining = user?.quota?.remaining ?? null;
+  const showAiLimitPromo =
+    isLoggedIn &&
+    aiPendingCount > 0 &&
+    aiQueue.total === 0 &&
+    aiRemaining != null &&
+    aiRemaining <= 0;
+
+  const onRunBookOcr = useCallback(() => {
+    if (!book) return;
+    if (!isLoggedIn) {
+      router.push('/login');
+      return;
+    }
+    const waiting = book.pages.filter(
+      (page) => page.ocrStatus === 'idle' || page.ocrStatus === 'error'
+    );
+    if (waiting.length === 0) return;
+
+    void (async () => {
+      const remaining = await getOcrRemaining();
+      const slice =
+        remaining == null ? waiting : waiting.slice(0, Math.max(0, remaining));
+      if (slice.length === 0) {
+        Alert.alert(
+          'Limit OCR',
+          'Brak dostępnych odczytów w tym miesiącu. Zdjęcia możesz dalej robić — przejdź na Pro, aby mieć nielimitowane OCR.'
+        );
+        return;
+      }
+      enqueueOcrJobs(
+        slice.map((page) => ({
+          bookId: book.id,
+          pageId: page.id,
+          pageIndex: page.index,
+          imageUri: page.imageUri,
+        }))
+      );
+    })();
+  }, [book, isLoggedIn, router]);
 
   const onRunBookAi = useCallback(() => {
     if (!book) return;
@@ -224,10 +308,15 @@ export default function BookDetailScreen() {
     }
     const waiting = book.pages.filter(needsAiRewrite).length;
     if (waiting === 0) return;
-    void enqueuePendingAiForBook(book.id).catch(() => {
-      // Status błędów widać w AiQueueCard / badge’ach stron.
-    });
-  }, [book, isLoggedIn, router]);
+    void enqueuePendingAiForBook(book.id)
+      .then(async () => {
+        await refreshAuth();
+        await refresh();
+      })
+      .catch(() => {
+        // Status błędów widać w AiQueueCard / badge’ach stron.
+      });
+  }, [book, isLoggedIn, refresh, refreshAuth, router]);
 
   const openPageMenu = useCallback(
     (page: BookPage) => {
@@ -578,8 +667,21 @@ export default function BookDetailScreen() {
         ListHeaderComponent={
           <View style={styles.feedHeader}>
             <ScanQueueCard />
+            {showOcrPromo ? (
+              <OcrPromoCard
+                count={ocrPendingCount}
+                onPress={onRunBookOcr}
+                disabled={actionBusy}
+              />
+            ) : null}
             <AiQueueCard />
-            {aiQueue.total === 0 ? (
+            {aiQueue.total === 0 && showAiLimitPromo ? (
+              <AiLimitPromoCard
+                count={aiPendingCount}
+                onPress={() => router.push('/usage')}
+              />
+            ) : null}
+            {aiQueue.total === 0 && !showAiLimitPromo ? (
               <AiPromoCard
                 count={aiPendingCount}
                 onPress={onRunBookAi}

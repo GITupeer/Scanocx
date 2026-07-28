@@ -479,6 +479,44 @@ export async function resumePendingCloudAi(preferredBookId?: string): Promise<vo
   }
 }
 
+function isAiQuotaExceeded(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  if (error.status === 402 || error.status === 429) return true;
+  return isAiQuotaErrorMessage(error.message);
+}
+
+function isAiQuotaErrorMessage(message: string | null | undefined): boolean {
+  if (!message) return false;
+  const msg = message.toLowerCase();
+  return (
+    msg.includes('limit') ||
+    msg.includes('quota') ||
+    msg.includes('przekrocz')
+  );
+}
+
+async function clearAiQuotaErrors(
+  bookId: string,
+  pages: Array<{ id: string; aiStatus: string; aiError: string | null }>
+): Promise<void> {
+  for (const page of pages) {
+    if (page.aiStatus !== 'error' || !isAiQuotaErrorMessage(page.aiError)) continue;
+    await withBookMetaLock(() =>
+      updatePageAi(bookId, page.id, { aiStatus: 'idle', aiError: null })
+    );
+  }
+}
+
+async function resetPagesToIdle(bookId: string, pageIds: string[]): Promise<void> {
+  for (const pageId of pageIds) {
+    const fresh = (await getBook(bookId)).pages.find((p) => p.id === pageId);
+    if (!fresh || fresh.aiStatus === 'done') continue;
+    await withBookMetaLock(() =>
+      updatePageAi(bookId, pageId, { aiStatus: 'idle', aiError: null })
+    );
+  }
+}
+
 async function startCloudAnalysis(
   bookId: string,
   pageIds?: string[],
@@ -496,10 +534,31 @@ async function startCloudAnalysis(
   }
 
   const book = await getBook(bookId);
-  const pages = book.pages
+  let pages = book.pages
     .filter((page) => (pageIds ? pageIds.includes(page.id) : needsAiRewrite(page)))
     .filter((page) => page.ocrText.trim().length > 0)
     .sort((a, b) => a.index - b.index);
+
+  if (pages.length === 0) {
+    return 0;
+  }
+
+  // Tylko tyle stron, ile mieści się w limicie — reszta zostaje bez błędu.
+  try {
+    const quota = await api.fetchQuota();
+    const remaining = Math.max(0, quota.remaining);
+    if (remaining <= 0) {
+      await clearAiQuotaErrors(bookId, pages);
+      return 0;
+    }
+    if (pages.length > remaining) {
+      const skipped = pages.slice(remaining);
+      pages = pages.slice(0, remaining);
+      await clearAiQuotaErrors(bookId, skipped);
+    }
+  } catch {
+    // Brak sieci / quota — spróbuj wysłać; backend i tak odrzuci przy limicie.
+  }
 
   if (pages.length === 0) {
     return 0;
@@ -552,6 +611,18 @@ async function startCloudAnalysis(
 
     return pages.length;
   } catch (error) {
+    // Limit wyczerpany — cicho wycofaj pending, bez błędu na stronach / w karcie kolejki.
+    if (isAiQuotaExceeded(error)) {
+      await resetPagesToIdle(
+        bookId,
+        pages.map((p) => p.id)
+      );
+      resetCounters();
+      await clearPersistedActiveBatch();
+      publish();
+      return 0;
+    }
+
     const message = error instanceof Error ? error.message : 'Błąd analizy AI.';
     for (const page of pages) {
       const fresh = (await getBook(bookId)).pages.find((p) => p.id === page.id);
@@ -606,6 +677,17 @@ export function cancelAiForBook(_bookId: string): void {
 export async function enqueuePendingAiForBook(bookId: string): Promise<number> {
   if (!isApiConfigured()) return 0;
   return startCloudAnalysis(bookId, undefined, false);
+}
+
+/** Usuwa stare błędy limitu AI (np. „Przekroczono limit”) — strony wracają do idle. */
+export async function clearAiQuotaErrorsForBook(bookId: string): Promise<boolean> {
+  const book = await getBook(bookId);
+  const dirty = book.pages.filter(
+    (page) => page.aiStatus === 'error' && isAiQuotaErrorMessage(page.aiError)
+  );
+  if (dirty.length === 0) return false;
+  await clearAiQuotaErrors(bookId, dirty);
+  return true;
 }
 
 export async function runPageAiExclusive(bookId: string, pageId: string): Promise<string> {

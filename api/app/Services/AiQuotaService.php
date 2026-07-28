@@ -12,7 +12,7 @@ class AiQuotaService
 {
     public const TIMEZONE = 'Europe/Warsaw';
 
-    public const FREE_DAILY_LIMIT = 3;
+    public const FREE_MONTHLY_LIMIT = 5;
 
     public const PRO_MONTHLY_LIMIT = 500;
 
@@ -61,7 +61,7 @@ class AiQuotaService
 
         DB::transaction(function () use ($user, $periodType, $periodKey, $pages) {
             $usage = $this->usageRow($user, $periodType, $periodKey, lock: true);
-            $limit = $user->isPro() ? self::PRO_MONTHLY_LIMIT : self::FREE_DAILY_LIMIT;
+            $limit = $user->isPro() ? self::PRO_MONTHLY_LIMIT : self::FREE_MONTHLY_LIMIT;
             $remaining = $limit - (int) $usage->used - (int) $usage->reserved;
             if ($remaining < $pages) {
                 throw new RuntimeException('Przekroczono limit AI.');
@@ -100,12 +100,13 @@ class AiQuotaService
     private function periodFor(User $user): array
     {
         $now = Carbon::now(self::TIMEZONE);
+        $periodKey = $now->format('Y-m');
 
         if ($user->isPro()) {
-            return ['month', $now->format('Y-m'), self::PRO_MONTHLY_LIMIT];
+            return ['month', $periodKey, self::PRO_MONTHLY_LIMIT];
         }
 
-        return ['day', $now->format('Y-m-d'), self::FREE_DAILY_LIMIT];
+        return ['month', $periodKey, self::FREE_MONTHLY_LIMIT];
     }
 
     private function usageRow(User $user, string $periodType, string $periodKey, bool $lock = false): AiQuotaUsage

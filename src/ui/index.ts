@@ -14,6 +14,8 @@ export { BusyOverlay, Loader } from './Loader';
 export { AiPulse, FadeInUp, ScanBeam } from './Motion';
 export { ProgressBar } from './Progress';
 export { AiPromoCard } from './AiPromoCard';
+export { AiLimitPromoCard } from './AiLimitPromoCard';
+export { OcrPromoCard } from './OcrPromoCard';
 export { AiQueueCard } from './AiQueueCard';
 export { ScanQueueCard } from './ScanQueueCard';
 export { SegmentedControl, type SegmentOption } from './SegmentedControl';

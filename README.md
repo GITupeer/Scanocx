@@ -63,7 +63,7 @@ eas update --channel preview --message "opis zmian"
 2. Szybkie zdjęcia stron (kamera / galeria)
 3. OCR ML Kit on-device + wykrywanie numerów stron (usuwane z tekstu OCR)
 4. Korekta AI w chmurze (Laravel + kolejka Horizon, max 3 joby) — wymaga logowania
-5. Limity: free 3 strony/dzień, pro 500/miesiąc (pro przypisywane ręcznie przez admina)
+5. Limity: free 5 stron AI/miesiąc, pro 500/miesiąc (pro przypisywane ręcznie przez admina)
 6. Edycja rozpoznanego tekstu
 7. PDF i udostępnianie
 
