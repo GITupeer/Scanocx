@@ -21,6 +21,11 @@ class ProcessPageAiJob implements ShouldQueue
     public function __construct(public int $aiJobId)
     {
         $this->onQueue('ai');
+
+        // Laravel Cloud managed queues używają connection "cloud".
+        if ((string) env('QUEUE_CONNECTION', '') === 'cloud') {
+            $this->onConnection('cloud');
+        }
     }
 
     public function handle(GeminiService $gemini, AiQuotaService $quota): void

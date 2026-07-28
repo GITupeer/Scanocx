@@ -26,10 +26,14 @@ Horizon na Windows wymaga `--ignore-platform-req` przy instalacji (brak `pcntl`)
 
 ## Kolejka AI
 
-- Queue: `ai`
-- Max 3 równoległe workery (`config/horizon.php` → `supervisor-ai`)
-- Limit free: 3 strony/dzień (Europe/Warsaw)
-- Limit pro: 500 stron/miesiąc
+Na **Laravel Cloud** używamy **Managed queue**:
+
+1. Queue name: `ai`
+2. Max workers: `3`
+3. Env: **`QUEUE_CONNECTION=cloud`** (ważne — nie `redis` / `database`)
+4. Visibility timeout ≥ 180s
+
+Jeśli joby w tabeli `ai_jobs` zostają na `queued`, aplikacja dispatchuje na zły driver (np. `database`/`redis`), a managed workers ich nie widzą.
 
 ## Endpointy
 
