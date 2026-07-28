@@ -169,91 +169,6 @@
             }
         }
 
-        .actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.75rem;
-            margin-top: 0.5rem;
-            align-items: center;
-        }
-
-        @media (max-width: 820px) {
-            .actions {
-                justify-content: center;
-            }
-        }
-
-        .cta {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.55rem;
-            padding: 0.85rem 1.35rem;
-            border-radius: 999px;
-            font-weight: 600;
-            font-size: 0.95rem;
-            text-decoration: none;
-            color: #fff;
-            background: linear-gradient(120deg, var(--violet), var(--blue));
-            box-shadow: 0 10px 30px rgba(76, 125, 245, 0.28);
-            transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
-        }
-
-        .cta:hover {
-            transform: translateY(-2px);
-            filter: brightness(1.06);
-            box-shadow: 0 14px 36px rgba(124, 92, 255, 0.35);
-        }
-
-        .cta svg {
-            width: 16px;
-            height: 16px;
-        }
-
-        .ghost {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            padding: 0.85rem 1.1rem;
-            border-radius: 999px;
-            font-weight: 500;
-            font-size: 0.92rem;
-            text-decoration: none;
-            color: var(--muted);
-            border: 1px solid var(--line);
-            background: rgba(255, 255, 255, 0.03);
-            transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
-        }
-
-        .ghost:hover {
-            color: var(--ink);
-            border-color: rgba(255, 255, 255, 0.18);
-            background: rgba(255, 255, 255, 0.06);
-        }
-
-        .status {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.55rem;
-            color: var(--faint);
-            font-size: 0.88rem;
-            margin-top: 0.25rem;
-        }
-
-        .pulse {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--mint);
-            box-shadow: 0 0 0 0 rgba(16, 191, 160, 0.55);
-            animation: pulse 2.2s ease-out infinite;
-        }
-
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(16, 191, 160, 0.5); }
-            70% { box-shadow: 0 0 0 10px rgba(16, 191, 160, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(16, 191, 160, 0); }
-        }
-
         .visual {
             position: relative;
             width: min(100%, 420px);
@@ -311,7 +226,7 @@
         }
 
         @media (prefers-reduced-motion: reduce) {
-            .orb, .pulse, .visual::before,
+            .orb, .visual::before,
             .copy, .visual, .meta {
                 animation: none;
             }
@@ -330,19 +245,6 @@
                 <h1 class="brand">Scanocx</h1>
                 <p class="headline">Backend API for document scanning and analysis</p>
                 <p class="lede">The server is up and accepting requests from the Scanocx mobile app.</p>
-                <div class="actions">
-                    <a class="cta" href="/api/health">
-                        Check health
-                        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                            <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                    </a>
-                    <a class="ghost" href="/horizon" rel="noopener">Horizon</a>
-                </div>
-                <p class="status">
-                    <span class="pulse" aria-hidden="true"></span>
-                    Status: operational · {{ config('app.env') }}
-                </p>
             </div>
 
             <div class="visual" aria-hidden="true">
