@@ -2,8 +2,8 @@
  * Ekran skanowania — Capture v2
  *
  * Spust: tylko takePictureAsync.
- * Potem: crop → zapis → opcjonalne OCR (limit free / nielimitowane Pro).
- * Zdjęcia bez OCR są zawsze dozwolone. Przy OCR kolejne zdjęcie po zakończeniu odczytu.
+ * Potem: crop → zapis → opcjonalne OCR (tylko zalogowany; limit na backendzie).
+ * Gość i wyczerpany limit: same zdjęcia, bez OCR.
  */
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -15,8 +15,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CAPTURE_V2_GUIDE, pickFastPictureSize, snapCameraV2 } from '@/src/capture/v2';
 import { cropToGuide } from '@/src/images/cropToGuide';
+import { useAuth } from '@/src/auth/AuthProvider';
 import { runPageOcrExclusive } from '@/src/ocr/queue';
-import { canRunOcr, OcrQuotaExceededError } from '@/src/ocr/quota';
+import {
+  canRunOcr,
+  OcrAuthRequiredError,
+  OcrQuotaExceededError,
+} from '@/src/ocr/quota';
 import { addPageFromCameraUri, replacePageFromCameraUri } from '@/src/storage/books';
 import {
   Badge,
@@ -45,11 +50,12 @@ export default function CaptureScreenV2() {
   const isReplace = typeof replacePageId === 'string' && replacePageId.length > 0;
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { isLoggedIn } = useAuth();
 
   const cameraRef = useRef<CameraView>(null);
   const queueRef = useRef<Job[]>([]);
   const workingRef = useRef(false);
-  const quotaAlertedRef = useRef(false);
+  const ocrHintAlertedRef = useRef(false);
 
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraReady, setCameraReady] = useState(false);
@@ -65,14 +71,24 @@ export default function CaptureScreenV2() {
 
   const busy = snapping || pending > 0 || recognizingPage != null;
 
-  const notifyOcrQuota = useCallback(() => {
-    if (quotaAlertedRef.current) return;
-    quotaAlertedRef.current = true;
-    Alert.alert(
-      'Limit OCR',
-      'Darmowy plan: 30 odczytów tekstu na miesiąc. Zdjęcia zapisujesz dalej bez limitu — OCR możesz uruchomić później (Pro = nielimitowane).'
-    );
-  }, []);
+  const notifyOcrSkipped = useCallback(
+    (reason: 'guest' | 'quota') => {
+      if (ocrHintAlertedRef.current) return;
+      ocrHintAlertedRef.current = true;
+      if (reason === 'guest') {
+        Alert.alert(
+          'Tylko zdjęcia',
+          'Bez konta zapisujesz skany lokalnie. Zaloguj się, aby odczytać tekst (OCR) i korzystać z AI.'
+        );
+        return;
+      }
+      Alert.alert(
+        'Limit OCR',
+        'Darmowy plan: 30 odczytów tekstu na miesiąc. Zdjęcia zapisujesz dalej bez limitu — OCR możesz uruchomić później (Pro = nielimitowane).'
+      );
+    },
+    []
+  );
 
   // Ciemny ekran potrzebuje jasnych ikon paska statusu.
   useFocusEffect(
@@ -127,54 +143,47 @@ export default function CaptureScreenV2() {
             })
           : job.uri;
 
-        if (isReplace) {
-          const { page } = await replacePageFromCameraUri(id, replacePageId, preparedUri);
-          if (await canRunOcr()) {
-            setHint(`Rozpoznawanie tekstu…`);
-            setRecognizingPage(page.index);
-            try {
-              await runPageOcrExclusive(id, page.id, page.imageUri);
-              setHint(`Podmieniono stronę ${page.index}`);
-            } catch (error) {
-              if (error instanceof OcrQuotaExceededError) {
-                notifyOcrQuota();
-                setHint(`Zapisano zdjęcie · bez OCR · strona ${page.index}`);
-              } else {
-                throw error;
-              }
-            } finally {
-              setRecognizingPage(null);
-            }
-          } else {
-            notifyOcrQuota();
-            setHint(`Zapisano zdjęcie · bez OCR · strona ${page.index}`);
+        const tryOcr = async (pageIndex: number, pageId: string, imageUri: string, okHint: string) => {
+          if (!isLoggedIn) {
+            notifyOcrSkipped('guest');
+            setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
+            return;
           }
-          router.replace(`/book/${id}/page/${page.id}`);
-          break;
-        }
-
-        const { page } = await addPageFromCameraUri(id, preparedUri);
-        setSessionCount((n) => n + 1);
-        if (await canRunOcr()) {
-          setHint(`Rozpoznawanie tekstu…`);
-          setRecognizingPage(page.index);
+          if (!(await canRunOcr())) {
+            notifyOcrSkipped('quota');
+            setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
+            return;
+          }
+          setHint('Rozpoznawanie tekstu…');
+          setRecognizingPage(pageIndex);
           try {
-            await runPageOcrExclusive(id, page.id, page.imageUri);
-            setHint(`Gotowe · strona ${page.index}`);
+            await runPageOcrExclusive(id, pageId, imageUri);
+            setHint(okHint);
           } catch (error) {
-            if (error instanceof OcrQuotaExceededError) {
-              notifyOcrQuota();
-              setHint(`Zapisano · bez OCR · strona ${page.index}`);
+            if (error instanceof OcrAuthRequiredError) {
+              notifyOcrSkipped('guest');
+              setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
+            } else if (error instanceof OcrQuotaExceededError) {
+              notifyOcrSkipped('quota');
+              setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
             } else {
               throw error;
             }
           } finally {
             setRecognizingPage(null);
           }
-        } else {
-          notifyOcrQuota();
-          setHint(`Zapisano · bez OCR · strona ${page.index}`);
+        };
+
+        if (isReplace) {
+          const { page } = await replacePageFromCameraUri(id, replacePageId, preparedUri);
+          await tryOcr(page.index, page.id, page.imageUri, `Podmieniono stronę ${page.index}`);
+          router.replace(`/book/${id}/page/${page.id}`);
+          break;
         }
+
+        const { page } = await addPageFromCameraUri(id, preparedUri);
+        setSessionCount((n) => n + 1);
+        await tryOcr(page.index, page.id, page.imageUri, `Gotowe · strona ${page.index}`);
       } catch (error) {
         Alert.alert(
           'Błąd',
@@ -186,7 +195,7 @@ export default function CaptureScreenV2() {
     }
 
     workingRef.current = false;
-  }, [id, isReplace, notifyOcrQuota, replacePageId, router]);
+  }, [id, isLoggedIn, isReplace, notifyOcrSkipped, replacePageId, router]);
 
   const enqueue = useCallback(
     (job: Job) => {

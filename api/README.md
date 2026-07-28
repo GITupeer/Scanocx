@@ -42,4 +42,6 @@ Jeśli joby w tabeli `ai_jobs` zostają na `queued`, aplikacja dispatchuje na z�
 - `GET /api/ai/quota`
 - `POST /api/ai/analyze`
 - `GET /api/ai/batches/{id}`
+- `GET /api/ocr/quota`
+- `POST /api/ocr/reserve|consume|release` (tylko licznik — bez tekstu stron)
 - `GET|PATCH /api/admin/users` (rola `admin`)

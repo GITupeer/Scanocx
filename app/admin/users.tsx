@@ -99,6 +99,15 @@ export default function AdminUsersScreen() {
                     {user.quota.period_type === 'day' ? 'dzień' : 'miesiąc'})
                   </Text>
                 ) : null}
+                {user.ocr_quota ? (
+                  <Text style={styles.quota}>
+                    OCR:{' '}
+                    {user.ocr_quota.unlimited
+                      ? '∞'
+                      : `${user.ocr_quota.remaining}/${user.ocr_quota.limit}`}{' '}
+                    / miesiąc
+                  </Text>
+                ) : null}
               </View>
               <Divider />
               <View style={styles.actions}>

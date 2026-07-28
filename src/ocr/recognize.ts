@@ -6,6 +6,7 @@ import { ensurePortraitUri, rotateUri } from '@/src/images/ensurePortrait';
 import { extractPrintedPageNumber } from '@/src/ocr/extractPageNumber';
 import {
   assertOcrAllowed,
+  commitOcrSlot,
   releaseOcrSlot,
 } from '@/src/ocr/quota';
 import { pickUprightWithOcr, scoreUpright } from '@/src/ocr/upright';
@@ -95,6 +96,7 @@ export async function runPageOcr(
       resetAi: true,
     });
 
+    await commitOcrSlot();
     reserved = false;
     return cleanedText;
   } catch (error) {

@@ -1,5 +1,5 @@
 import { apiRequest } from '@/src/api/client';
-import type { AiBatch, AiQuota, AiUsageItem, ApiUser, AuthResponse } from '@/src/api/types';
+import type { AiBatch, AiQuota, AiUsageItem, ApiUser, AuthResponse, OcrQuota } from '@/src/api/types';
 
 export function register(input: {
   name: string;
@@ -75,6 +75,31 @@ export function fetchQuota(): Promise<AiQuota> {
 
 export function fetchAiUsage(): Promise<{ data: AiUsageItem[] }> {
   return apiRequest<{ data: AiUsageItem[] }>('/api/ai/usage');
+}
+
+export function fetchOcrQuota(): Promise<OcrQuota> {
+  return apiRequest<OcrQuota>('/api/ocr/quota');
+}
+
+export function reserveOcrQuota(count = 1): Promise<OcrQuota> {
+  return apiRequest<OcrQuota>('/api/ocr/reserve', {
+    method: 'POST',
+    body: { count },
+  });
+}
+
+export function consumeOcrQuota(count = 1): Promise<OcrQuota> {
+  return apiRequest<OcrQuota>('/api/ocr/consume', {
+    method: 'POST',
+    body: { count },
+  });
+}
+
+export function releaseOcrQuota(count = 1): Promise<OcrQuota> {
+  return apiRequest<OcrQuota>('/api/ocr/release', {
+    method: 'POST',
+    body: { count },
+  });
 }
 
 export function analyzeBook(input: {

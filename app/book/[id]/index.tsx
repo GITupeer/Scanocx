@@ -33,7 +33,7 @@ import {
   tryResumeOcrQueue,
   useOcrQueue,
 } from '@/src/ocr/queue';
-import { getOcrRemaining, OcrQuotaExceededError } from '@/src/ocr/quota';
+import { getOcrRemaining, OcrAuthRequiredError, OcrQuotaExceededError } from '@/src/ocr/quota';
 import {
   clearBookCover,
   deleteBook,
@@ -95,7 +95,7 @@ const VIEW_MODES = [
 function ocrOverlayCopy(page: BookPage): string {
   if (page.ocrStatus === 'pending') return 'Odczytywanie tekstu…';
   if (page.ocrStatus === 'idle') {
-    return 'Zdjęcie zapisane — uruchom odczyt tekstu, gdy będziesz gotowy.';
+    return 'Zdjęcie zapisane — zaloguj się i uruchom odczyt tekstu.';
   }
   if (page.aiStatus === 'pending') return 'Korekta AI w toku…';
   if (page.aiStatus === 'error') {
@@ -163,9 +163,9 @@ export default function BookDetailScreen() {
   }, [aiQueue.completed, ocrQueue.completed, refresh]);
 
   // Strony, których analiza nie zdążyła się wykonać (np. apka zamknięta w trakcie),
-  // wracają do kolejki — tylko w limicie OCR (free: 30/mies.). Duplikaty odrzuca kolejka.
+  // wracają do kolejki — tylko dla zalogowanych, w limicie OCR. Duplikaty odrzuca kolejka.
   useEffect(() => {
-    if (!book || actionBusy) return;
+    if (!book || actionBusy || !isLoggedIn) return;
     const unprocessed = book.pages.filter((page) => page.ocrStatus === 'pending');
     if (unprocessed.length === 0) {
       void tryResumeOcrQueue();
@@ -186,7 +186,7 @@ export default function BookDetailScreen() {
       }
       await tryResumeOcrQueue();
     })();
-  }, [actionBusy, book]);
+  }, [actionBusy, book, isLoggedIn]);
 
   // Korekta AI jest w chmurze — po restarcie wznów polling, jeśli strony nadal czekają.
   useEffect(() => {
@@ -257,6 +257,11 @@ export default function BookDetailScreen() {
 
   const onRetryOcr = useCallback(() => {
     if (!book || !menuPage) return;
+    if (!isLoggedIn) {
+      closePageMenu();
+      router.push('/login');
+      return;
+    }
     const page = menuPage;
     closePageMenu();
     setActionBusy(true);
@@ -267,7 +272,7 @@ export default function BookDetailScreen() {
       } catch (error) {
         Alert.alert(
           'Odczyt tekstu',
-          error instanceof OcrQuotaExceededError
+          error instanceof OcrAuthRequiredError || error instanceof OcrQuotaExceededError
             ? error.message
             : error instanceof Error
               ? error.message
@@ -278,7 +283,7 @@ export default function BookDetailScreen() {
         setActionBusy(false);
       }
     })();
-  }, [book, closePageMenu, menuPage, refresh]);
+  }, [book, closePageMenu, isLoggedIn, menuPage, refresh, router]);
 
   const onRotate180 = useCallback(() => {
     if (!book || !menuPage) return;
@@ -288,10 +293,18 @@ export default function BookDetailScreen() {
     void (async () => {
       try {
         const { page: rotated } = await rotatePageImage180(book.id, page.id);
+        if (!isLoggedIn) {
+          Alert.alert(
+            'Obrócono',
+            'Zdjęcie obrócone. Zaloguj się, aby odczytać tekst OCR.'
+          );
+          await refresh();
+          return;
+        }
         try {
           await runPageOcrExclusive(book.id, rotated.id, rotated.imageUri, { detectUpright: false });
         } catch (error) {
-          if (error instanceof OcrQuotaExceededError) {
+          if (error instanceof OcrQuotaExceededError || error instanceof OcrAuthRequiredError) {
             Alert.alert('Obrócono', error.message);
             await refresh();
             return;
@@ -306,7 +319,7 @@ export default function BookDetailScreen() {
         setActionBusy(false);
       }
     })();
-  }, [book, closePageMenu, menuPage, refresh]);
+  }, [book, closePageMenu, isLoggedIn, menuPage, refresh]);
 
   const onConfirmDeletePage = useCallback(() => {
     const page = deletePageTarget;
@@ -641,7 +654,9 @@ export default function BookDetailScreen() {
             label={menuPage?.ocrStatus === 'idle' ? 'Odczytaj tekst' : 'Ponowny odczyt'}
             detail={
               menuPage?.ocrStatus === 'idle'
-                ? 'Uruchom OCR dla tego zdjęcia (limit free: 30/mies.)'
+                ? isLoggedIn
+                  ? 'Uruchom OCR dla tego zdjęcia (limit free: 30/mies.)'
+                  : 'Wymaga zalogowania'
                 : 'Odczytaj tekst ze zdjęcia od nowa'
             }
             onPress={onRetryOcr}

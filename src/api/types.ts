@@ -8,6 +8,18 @@ export type AiQuota = {
   remaining: number;
 };
 
+/** Limit OCR z backendu. Pro: unlimited=true, limit/remaining = null. */
+export type OcrQuota = {
+  plan: string;
+  period_type: 'day' | 'month' | string;
+  period_key: string;
+  limit: number | null;
+  used: number;
+  reserved: number;
+  remaining: number | null;
+  unlimited: boolean;
+};
+
 export type ApiUser = {
   id: number;
   name: string;
@@ -15,6 +27,7 @@ export type ApiUser = {
   plan: 'free' | 'pro' | string;
   roles: string[];
   quota: AiQuota | null;
+  ocr_quota: OcrQuota | null;
   created_at?: string | null;
 };
 

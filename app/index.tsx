@@ -345,12 +345,16 @@ export default function LibraryScreen() {
                     />
                   </View>
                   {!ocrQuota.unlimited &&
+                  ocrQuota.loggedIn &&
                   ocrQuota.limit != null &&
                   ocrQuota.limit > 0 ? (
                     <ProgressBar
                       value={Math.max(
                         0,
-                        Math.min(1, ocrQuota.used / ocrQuota.limit),
+                        Math.min(
+                          1,
+                          (ocrQuota.used + ocrQuota.reserved) / ocrQuota.limit,
+                        ),
                       )}
                       height={5}
                       style={styles.planBar}
@@ -376,10 +380,9 @@ export default function LibraryScreen() {
                     <Icon name="lock" size={16} color={colors.primary} />
                   </View>
                   <View style={styles.planText}>
-                    <Text style={styles.planTitle}>Plan darmowy</Text>
+                    <Text style={styles.planTitle}>Zaloguj się</Text>
                     <Text style={styles.planDetail} numberOfLines={2}>
-                      OCR {ocrQuota.remaining ?? 0}/{ocrQuota.limit ?? 30} /
-                      miesiąc · zdjęcia bez limitu · AI po zalogowaniu
+                      Bez konta: tylko zdjęcia. OCR (30/mies.) i AI po zalogowaniu
                     </Text>
                   </View>
                   <Icon name="chevronRight" size={16} color={colors.faint} />

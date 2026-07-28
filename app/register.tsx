@@ -65,8 +65,8 @@ export default function RegisterScreen() {
           keyboardShouldPersistTaps="handled">
           <Text style={styles.title}>Załóż konto</Text>
           <Text style={styles.subtitle}>
-            Darmowy: 30 OCR / miesiąc · zdjęcia bez limitu · 3 strony AI / dzień. Pro =
-            nielimitowane OCR i AI.
+            Po rejestracji: 30 OCR / miesiąc · 3 strony AI / dzień. Pro = nielimitowane.
+            Bez konta zapisujesz tylko zdjęcia.
           </Text>
 
           <TextField

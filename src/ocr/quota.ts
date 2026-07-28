@@ -1,40 +1,57 @@
 /**
- * Lokalny limit OCR w planie darmowym: 30 odczytów / miesiąc kalendarzowy.
- * Plan Pro — bez limitu. Same zdjęcia (bez OCR) nie zużywają limitu.
+ * Limit OCR trzymany na backendzie (tylko zalogowany użytkownik).
+ * Free: 30 / miesiąc. Pro: nielimitowane.
+ * Gość — bez OCR (tylko lokalne zdjęcia).
  */
 import { useSyncExternalStore } from 'react';
-import * as FileSystem from 'expo-file-system/legacy';
+
+import { isApiConfigured } from '@/src/ai/config';
+import * as api from '@/src/api/endpoints';
+import { ApiError, type OcrQuota } from '@/src/api/types';
+import { getAuthToken } from '@/src/api/token';
 
 export const FREE_OCR_MONTHLY_LIMIT = 30;
 
-export type OcrPlan = 'free' | 'pro';
-
 export type OcrQuotaSnapshot = {
-  plan: OcrPlan;
+  loggedIn: boolean;
+  plan: string;
   periodKey: string;
   limit: number | null;
   used: number;
+  reserved: number;
   remaining: number | null;
   unlimited: boolean;
 };
 
-export class OcrQuotaExceededError extends Error {
+export class OcrAuthRequiredError extends Error {
   constructor() {
+    super('Odczyt tekstu wymaga zalogowania. Bez konta możesz tylko robić zdjęcia.');
+    this.name = 'OcrAuthRequiredError';
+  }
+}
+
+export class OcrQuotaExceededError extends Error {
+  constructor(message?: string) {
     super(
-      `Darmowy plan: limit ${FREE_OCR_MONTHLY_LIMIT} odczytów OCR na miesiąc. Zdjęcia możesz dalej robić bez limitu — przejdź na Pro, aby mieć nielimitowane OCR.`
+      message ??
+        `Darmowy plan: limit ${FREE_OCR_MONTHLY_LIMIT} odczytów OCR na miesiąc. Zdjęcia możesz dalej robić bez limitu — przejdź na Pro, aby mieć nielimitowane OCR.`
     );
     this.name = 'OcrQuotaExceededError';
   }
 }
 
-type StoredQuota = {
-  periodKey: string;
-  used: number;
+const GUEST_SNAPSHOT: OcrQuotaSnapshot = {
+  loggedIn: false,
+  plan: 'guest',
+  periodKey: '',
+  limit: 0,
+  used: 0,
+  reserved: 0,
+  remaining: 0,
+  unlimited: false,
 };
 
-let plan: OcrPlan = 'free';
-let cached: StoredQuota | null = null;
-let snapshot: OcrQuotaSnapshot = buildSnapshot('free', currentPeriodKey(), 0);
+let snapshot: OcrQuotaSnapshot = GUEST_SNAPSHOT;
 const listeners = new Set<() => void>();
 
 let chain: Promise<unknown> = Promise.resolve();
@@ -48,94 +65,34 @@ function withLock<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-function quotaPath(): string {
-  const root = FileSystem.documentDirectory;
-  if (!root) {
-    throw new Error('documentDirectory is unavailable on this platform.');
-  }
-  return `${root}ocr-quota.json`;
-}
-
-export function currentPeriodKey(date = new Date()): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
-}
-
-function buildSnapshot(p: OcrPlan, periodKey: string, used: number): OcrQuotaSnapshot {
-  if (p === 'pro') {
-    return {
-      plan: p,
-      periodKey,
-      limit: null,
-      used,
-      remaining: null,
-      unlimited: true,
-    };
-  }
-  const clamped = Math.max(0, used);
+function fromApi(q: OcrQuota): OcrQuotaSnapshot {
   return {
-    plan: p,
-    periodKey,
-    limit: FREE_OCR_MONTHLY_LIMIT,
-    used: clamped,
-    remaining: Math.max(0, FREE_OCR_MONTHLY_LIMIT - clamped),
-    unlimited: false,
+    loggedIn: true,
+    plan: q.plan,
+    periodKey: q.period_key,
+    limit: q.limit,
+    used: q.used,
+    reserved: q.reserved,
+    remaining: q.remaining,
+    unlimited: q.unlimited || q.limit == null,
   };
 }
 
-function publish(periodKey: string, used: number): void {
-  cached = { periodKey, used };
-  snapshot = buildSnapshot(plan, periodKey, used);
+function publish(next: OcrQuotaSnapshot): void {
+  snapshot = next;
   listeners.forEach((listener) => listener());
 }
 
-async function readStored(): Promise<StoredQuota> {
-  const periodKey = currentPeriodKey();
-  if (cached && cached.periodKey === periodKey) {
-    return cached;
+export function applyOcrQuotaFromUser(ocrQuota: OcrQuota | null | undefined): void {
+  if (!ocrQuota) {
+    publish(GUEST_SNAPSHOT);
+    return;
   }
-
-  try {
-    const path = quotaPath();
-    const info = await FileSystem.getInfoAsync(path);
-    if (!info.exists) {
-      const fresh = { periodKey, used: 0 };
-      cached = fresh;
-      return fresh;
-    }
-    const raw = JSON.parse(await FileSystem.readAsStringAsync(path)) as Partial<StoredQuota>;
-    if (raw.periodKey === periodKey && typeof raw.used === 'number') {
-      const stored = { periodKey, used: Math.max(0, Math.floor(raw.used)) };
-      cached = stored;
-      return stored;
-    }
-  } catch {
-    // uszkodzony plik → nowy okres
-  }
-
-  const fresh = { periodKey, used: 0 };
-  cached = fresh;
-  return fresh;
+  publish(fromApi(ocrQuota));
 }
 
-async function writeStored(state: StoredQuota): Promise<void> {
-  cached = state;
-  await FileSystem.writeAsStringAsync(quotaPath(), JSON.stringify(state));
-  publish(state.periodKey, state.used);
-}
-
-/** Ustawiane z AuthProvider — gość i free = limit, pro = bez limitu. */
-export function setOcrPlan(next: OcrPlan): void {
-  if (plan === next) return;
-  plan = next;
-  const periodKey = cached?.periodKey ?? currentPeriodKey();
-  const used = cached?.used ?? 0;
-  publish(periodKey, used);
-}
-
-export function getOcrPlan(): OcrPlan {
-  return plan;
+export function clearOcrQuota(): void {
+  publish(GUEST_SNAPSHOT);
 }
 
 export function getOcrQuotaSnapshot(): OcrQuotaSnapshot {
@@ -151,60 +108,99 @@ export function subscribeOcrQuota(listener: () => void): () => void {
 
 export async function refreshOcrQuota(): Promise<OcrQuotaSnapshot> {
   return withLock(async () => {
-    const state = await readStored();
-    publish(state.periodKey, state.used);
+    if (!isApiConfigured()) {
+      publish(GUEST_SNAPSHOT);
+      return snapshot;
+    }
+    const token = await getAuthToken();
+    if (!token) {
+      publish(GUEST_SNAPSHOT);
+      return snapshot;
+    }
+    try {
+      const q = await api.fetchOcrQuota();
+      publish(fromApi(q));
+    } catch {
+      // zostaw ostatni znany stan (np. offline)
+    }
     return snapshot;
   });
 }
 
 export async function getOcrRemaining(): Promise<number | null> {
-  if (plan === 'pro') return null;
-  const state = await withLock(() => readStored());
-  return Math.max(0, FREE_OCR_MONTHLY_LIMIT - state.used);
+  const snap = await refreshOcrQuota();
+  if (!snap.loggedIn) return 0;
+  if (snap.unlimited) return null;
+  return snap.remaining ?? 0;
 }
 
-/** `true` gdy wolno uruchomić OCR (Pro albo jest zapas w limicie). */
+/** `true` gdy zalogowany i (Pro albo jest zapas). */
 export async function canRunOcr(): Promise<boolean> {
-  if (plan === 'pro') return true;
-  const remaining = await getOcrRemaining();
-  return (remaining ?? 0) > 0;
+  if (!isApiConfigured()) return false;
+  const token = await getAuthToken();
+  if (!token) return false;
+  const snap = getOcrQuotaSnapshot().loggedIn
+    ? getOcrQuotaSnapshot()
+    : await refreshOcrQuota();
+  if (!snap.loggedIn) return false;
+  if (snap.unlimited) return true;
+  return (snap.remaining ?? 0) > 0;
 }
 
 /**
- * Rezerwuje 1 odczyt OCR. Przy błędzie wywołaj `releaseOcrSlot`.
- * Pro nie rezerwuje nic.
+ * Rezerwuje 1 odczyt OCR na backendzie przed lokalną analizą.
+ * Przy błędzie wywołaj `releaseOcrSlot`. Po sukcesie — `commitOcrSlot`.
  */
 export async function reserveOcrSlot(): Promise<boolean> {
   return withLock(async () => {
-    if (plan === 'pro') return true;
-    const state = await readStored();
-    if (state.used >= FREE_OCR_MONTHLY_LIMIT) {
-      publish(state.periodKey, state.used);
-      return false;
+    if (!isApiConfigured()) {
+      throw new OcrAuthRequiredError();
     }
-    const next = { periodKey: state.periodKey, used: state.used + 1 };
-    await writeStored(next);
-    return true;
+    const token = await getAuthToken();
+    if (!token) {
+      throw new OcrAuthRequiredError();
+    }
+
+    try {
+      const q = await api.reserveOcrQuota(1);
+      publish(fromApi(q));
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        throw new OcrAuthRequiredError();
+      }
+      if (error instanceof ApiError && error.status === 422) {
+        throw new OcrQuotaExceededError(error.message);
+      }
+      throw error;
+    }
+  });
+}
+
+export async function commitOcrSlot(): Promise<void> {
+  return withLock(async () => {
+    try {
+      const q = await api.consumeOcrQuota(1);
+      publish(fromApi(q));
+    } catch {
+      // offline po sukcesie lokalnym — rezerwacja i tak trzyma slot
+    }
   });
 }
 
 export async function releaseOcrSlot(): Promise<void> {
   return withLock(async () => {
-    if (plan === 'pro') return;
-    const state = await readStored();
-    const next = {
-      periodKey: state.periodKey,
-      used: Math.max(0, state.used - 1),
-    };
-    await writeStored(next);
+    try {
+      const q = await api.releaseOcrQuota(1);
+      publish(fromApi(q));
+    } catch {
+      // ignore
+    }
   });
 }
 
 export async function assertOcrAllowed(): Promise<void> {
-  const ok = await reserveOcrSlot();
-  if (!ok) {
-    throw new OcrQuotaExceededError();
-  }
+  await reserveOcrSlot();
 }
 
 export function useOcrQuota(): OcrQuotaSnapshot {

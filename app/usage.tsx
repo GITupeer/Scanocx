@@ -151,24 +151,29 @@ export default function UsageScreen() {
           </View>
           {ocrQuota.unlimited ? (
             <Text style={styles.quotaValue}>Nielimitowane</Text>
-          ) : (
+          ) : ocrQuota.loggedIn ? (
             <>
               <Text style={styles.quotaValue}>
                 {ocrQuota.remaining} z {ocrQuota.limit ?? FREE_OCR_MONTHLY_LIMIT} odczytów
               </Text>
               <Text style={styles.quotaHint}>
-                {ocrQuota.used} zużyte · zdjęcia bez limitu · limit odnawia się co miesiąc
+                {ocrQuota.used} zużyte
+                {ocrQuota.reserved > 0 ? ` · ${ocrQuota.reserved} zarezerwowane` : ''}
+                {' · '}
+                zdjęcia bez limitu · limit odnawia się co miesiąc
               </Text>
               <ProgressBar
                 value={
                   ocrQuota.limit != null && ocrQuota.limit > 0
-                    ? Math.max(0, Math.min(1, ocrQuota.used / ocrQuota.limit))
+                    ? Math.max(0, Math.min(1, (ocrQuota.used + ocrQuota.reserved) / ocrQuota.limit))
                     : 0
                 }
                 height={6}
                 style={styles.quotaBar}
               />
             </>
+          ) : (
+            <Text style={styles.quotaHint}>OCR dostępne po zalogowaniu.</Text>
           )}
         </Card>
 

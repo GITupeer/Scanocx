@@ -15,7 +15,7 @@ import { useAuth } from '@/src/auth/AuthProvider';
 import type { Book, BookPage } from '@/src/domain/types';
 import { isLandscapeUri } from '@/src/images/ensurePortrait';
 import { cancelOcrForPage, runPageOcrExclusive, useOcrQueue } from '@/src/ocr/queue';
-import { OcrQuotaExceededError } from '@/src/ocr/quota';
+import { OcrAuthRequiredError, OcrQuotaExceededError } from '@/src/ocr/quota';
 import {
   deletePage,
   getBook,
@@ -198,6 +198,10 @@ export default function PageDetailScreen() {
 
   const onRetryOcr = async () => {
     if (!id || !page) return;
+    if (!isLoggedIn) {
+      router.push('/login');
+      return;
+    }
     setRunningOcr(true);
     try {
       const recognized = await runPageOcrExclusive(id, page.id, page.imageUri);
@@ -208,7 +212,7 @@ export default function PageDetailScreen() {
     } catch (error) {
       Alert.alert(
         'Odczyt tekstu',
-        error instanceof OcrQuotaExceededError
+        error instanceof OcrAuthRequiredError || error instanceof OcrQuotaExceededError
           ? error.message
           : error instanceof Error
             ? error.message
@@ -247,6 +251,11 @@ export default function PageDetailScreen() {
     try {
       const { page: rotated } = await rotatePageImage180(id, page.id);
       setPage(rotated);
+      if (!isLoggedIn) {
+        Alert.alert('Obrócono', 'Zdjęcie obrócone. Zaloguj się, aby odczytać tekst OCR.');
+        await refresh();
+        return;
+      }
       setRunningOcr(true);
       try {
         const recognized = await runPageOcrExclusive(id, rotated.id, rotated.imageUri, {
@@ -256,7 +265,7 @@ export default function PageDetailScreen() {
         setAiText('');
         setTextTab('ocr');
       } catch (error) {
-        if (error instanceof OcrQuotaExceededError) {
+        if (error instanceof OcrQuotaExceededError || error instanceof OcrAuthRequiredError) {
           Alert.alert('Obrócono', error.message);
           await refresh();
           return;

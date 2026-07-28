@@ -7,7 +7,7 @@ import * as api from '@/src/api/endpoints';
 import { clearAuthToken, getAuthToken, setAuthToken } from '@/src/api/token';
 import type { ApiUser } from '@/src/api/types';
 import { tryResumeOcrQueue } from '@/src/ocr/queue';
-import { refreshOcrQuota, setOcrPlan } from '@/src/ocr/quota';
+import { applyOcrQuotaFromUser, clearOcrQuota, refreshOcrQuota } from '@/src/ocr/quota';
 
 type AuthContextValue = {
   ready: boolean;
@@ -30,19 +30,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     if (!isApiConfigured()) {
       setUser(null);
+      clearOcrQuota();
       return;
     }
     const token = await getAuthToken();
     if (!token) {
       setUser(null);
+      clearOcrQuota();
       return;
     }
     try {
       const me = await api.fetchMe();
       setUser(me);
+      applyOcrQuotaFromUser(me.ocr_quota);
     } catch {
       await clearAuthToken();
       setUser(null);
+      clearOcrQuota();
     }
   }, []);
 
@@ -59,16 +63,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [ready, user?.id]);
 
   useEffect(() => {
-    setOcrPlan(user?.plan === 'pro' ? 'pro' : 'free');
+    if (!ready) return;
+    if (user == null) {
+      clearOcrQuota();
+      return;
+    }
+    applyOcrQuotaFromUser(user.ocr_quota);
     void refreshOcrQuota()
       .then(() => tryResumeOcrQueue())
       .catch(() => undefined);
-  }, [user?.plan, ready]);
+  }, [user?.id, user?.plan, user?.ocr_quota?.remaining, ready]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     const result = await api.login({ email, password });
     await setAuthToken(result.token);
     setUser(result.user);
+    applyOcrQuotaFromUser(result.user.ocr_quota);
     return result.user;
   }, []);
 
@@ -81,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     await setAuthToken(result.token);
     setUser(result.user);
+    applyOcrQuotaFromUser(result.user.ocr_quota);
     return result.user;
   }, []);
 
@@ -92,6 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     await clearAuthToken();
     setUser(null);
+    clearOcrQuota();
   }, []);
 
   const requireAuth = useCallback(() => user != null, [user]);
