@@ -56,10 +56,22 @@ const FEATURES: Feature[] = [
     pro: "Bez limitu",
   },
   {
+    icon: "text",
+    title: "Export TXT",
+    free: "Bez limitu",
+    pro: "Bez limitu",
+  },
+  {
     icon: "pdf",
-    title: "Eksport PDF",
-    free: "Tak",
-    pro: "Tak",
+    title: "Export PDF",
+    free: "20 / miesiąc",
+    pro: "Bez limitu",
+  },
+  {
+    icon: "ebook",
+    title: "Export eBook",
+    free: "Niedostępne",
+    pro: "Bez limitu",
   },
 ];
 
@@ -259,7 +271,7 @@ export default function SubscribeScreen() {
           {[
             "Więcej korekty AI na trudniejsze skany",
             "OCR bez miesięcznego limitu",
-            "Te same lokalne książki i eksport PDF",
+            "TXT bez limitu · PDF i eBook bez limitu",
           ].map((line) => (
             <View key={line} style={styles.perkRow}>
               <Icon name="check" size={16} color={colors.success} />

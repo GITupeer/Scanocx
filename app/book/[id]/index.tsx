@@ -79,7 +79,9 @@ import {
   SegmentedControl,
   Sheet,
   SheetGroup,
+  TableOfContentsCard,
   TextField,
+  buildTableOfContents,
   colors,
   font,
   gradients,
@@ -103,17 +105,18 @@ const LIST_THUMB = 72;
 
 type ViewMode = 'cards' | 'grid' | 'list';
 type PageFilter = 'all' | 'manual';
+type MainTab = 'pages' | 'toc';
 
-const VIEW_MODES = [
-  { id: 'cards', label: 'Obecny' },
-  { id: 'grid', label: 'Grid' },
-  { id: 'list', label: 'Lista' },
-] as const satisfies readonly { id: ViewMode; label: string }[];
+const MAIN_TABS = [
+  { id: 'pages', label: 'Strony' },
+  { id: 'toc', label: 'Spis treści' },
+] as const satisfies readonly { id: MainTab; label: string }[];
 
-const PAGE_FILTERS = [
-  { id: 'all', label: 'Wszystkie' },
-  { id: 'manual', label: 'Niska jakość skanu' },
-] as const satisfies readonly { id: PageFilter; label: string }[];
+const VIEW_MODE_OPTIONS = [
+  { id: 'list', icon: 'notes' as const, label: 'Lista' },
+  { id: 'grid', icon: 'grid' as const, label: 'Siatka' },
+  { id: 'cards', icon: 'image' as const, label: 'Karty' },
+] as const;
 
 function ocrOverlayCopy(page: BookPage): string {
   if (page.ocrStatus === 'pending') return 'Odczytywanie tekstu…';
@@ -174,8 +177,10 @@ export default function BookDetailScreen() {
   const [book, setBook] = useState<Book | null>(null);
   const [loading, setLoading] = useState(true);
   const [showOcr, setShowOcr] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>('cards');
+  const [mainTab, setMainTab] = useState<MainTab>('pages');
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [pageFilter, setPageFilter] = useState<PageFilter>('all');
+  const [viewOptionsOpen, setViewOptionsOpen] = useState(false);
   const [menuPage, setMenuPage] = useState<BookPage | null>(null);
   const [analysisTarget, setAnalysisTarget] = useState<BookPage | null>(null);
   const [bookMenu, setBookMenu] = useState(false);
@@ -339,6 +344,11 @@ export default function BookDetailScreen() {
 
   const aiEligibleCount = useMemo(
     () => (book ? book.pages.filter(canRunAiRewrite).length : 0),
+    [book]
+  );
+
+  const tableOfContents = useMemo(
+    () => (book ? buildTableOfContents(book.pages) : []),
     [book]
   );
 
@@ -743,6 +753,13 @@ export default function BookDetailScreen() {
 
   const renderPage = viewMode === 'grid' ? renderGridPage : viewMode === 'list' ? renderListPage : renderCardsPage;
 
+  useEffect(() => {
+    if (viewMode !== 'cards' && showOcr) setShowOcr(false);
+  }, [showOcr, viewMode]);
+
+  const queuesBusy = ocrQueue.total > 0 || aiQueue.total > 0;
+  const showStatusPromo = !queuesBusy && (showOcrPromo || showAiLimitPromo || aiPendingCount > 0);
+
   if (loading && !book) {
     return <Loader label="Otwieram książkę…" />;
   }
@@ -753,134 +770,238 @@ export default function BookDetailScreen() {
 
   const bottomPad = DOCK_HEIGHT + insets.bottom + DOCK_BOTTOM_GAP + space.xl;
   const hasPages = book.pages.length > 0;
+  const tocCount = tableOfContents.length;
+
+  const openTocEntry = (pageId: string) => {
+    router.push(`/book/${book.id}/page/${pageId}`);
+  };
+
+  const processingCards = (
+    <>
+      <ScanQueueCard />
+      <AiQueueCard />
+      {showStatusPromo ? (
+        showOcrPromo ? (
+          <OcrPromoCard
+            count={ocrPendingCount}
+            onPress={onRunBookOcr}
+            disabled={actionBusy}
+          />
+        ) : showAiLimitPromo ? (
+          <AiLimitPromoCard
+            count={aiPendingCount}
+            onPress={() => router.push('/subscribe')}
+          />
+        ) : (
+          <AiPromoCard
+            count={aiPendingCount}
+            onPress={openAiMenu}
+            disabled={actionBusy}
+          />
+        )
+      ) : null}
+    </>
+  );
+
+  const pagesListHeader = (
+    <View style={styles.feedHeader}>
+      {processingCards}
+      {pageFilter === 'manual' ? (
+        <View style={styles.filterHint}>
+          <Icon name="alert" size={16} color={colors.warning} />
+          <Text style={styles.filterHintText}>
+            Niska jakość OCR lub spójność AI — przejrzyj te strony ręcznie.
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
 
   return (
     <View style={styles.root}>
       <AppBar
         title={book.title}
         subtitle={
-          pageFilter === 'manual'
-            ? `Niska jakość skanu: ${manualReviewCount}`
-            : `${pagesLabel(book.pages.length)} · rozpoznane ${doneCount}`
+          mainTab === 'toc'
+            ? tocCount > 0
+              ? `${tocCount} pozycji ze skanu AI`
+              : 'Nagłówki z analizy AI'
+            : pageFilter === 'manual'
+              ? `Do sprawdzenia: ${manualReviewCount}`
+              : `${pagesLabel(book.pages.length)} · OCR ${doneCount}`
         }
       />
 
       {hasPages ? (
         <SegmentedControl
-          options={VIEW_MODES}
-          value={viewMode}
-          onChange={setViewMode}
-          style={styles.viewModeBar}
-        />
-      ) : null}
-
-      {hasPages && manualReviewCount > 0 ? (
-        <SegmentedControl
-          options={PAGE_FILTERS.map((option) =>
-            option.id === 'manual'
-              ? { ...option, label: `Niska jakość skanu (${manualReviewCount})` }
-              : option
+          options={MAIN_TABS.map((tab) =>
+            tab.id === 'toc' && tocCount > 0
+              ? { ...tab, label: `Spis treści (${tocCount})` }
+              : tab
           )}
-          value={pageFilter}
-          onChange={setPageFilter}
-          style={styles.filterBar}
+          value={mainTab}
+          onChange={setMainTab}
+          style={styles.mainTabs}
         />
       ) : null}
 
-      <FlatList
-        key={`${viewMode}:${pageFilter}`}
-        data={visiblePages}
-        keyExtractor={(item) => item.id}
-        renderItem={renderPage}
-        numColumns={viewMode === 'grid' ? GRID_COLUMNS : 1}
-        columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
-        extraData={`${showOcr}:${viewMode}:${pageFilter}`}
-        showsVerticalScrollIndicator={false}
-        removeClippedSubviews={false}
-        windowSize={viewMode === 'cards' ? 5 : 9}
-        initialNumToRender={viewMode === 'cards' ? 3 : 8}
-        maxToRenderPerBatch={viewMode === 'cards' ? 3 : 8}
-        contentContainerStyle={[styles.feed, { paddingBottom: bottomPad }]}
-        ListHeaderComponent={
-          <View style={styles.feedHeader}>
-            <ScanQueueCard />
-            {showOcrPromo ? (
-              <OcrPromoCard
-                count={ocrPendingCount}
-                onPress={onRunBookOcr}
-                disabled={actionBusy}
+      {mainTab === 'toc' && hasPages ? (
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[styles.feed, styles.tocFeed, { paddingBottom: bottomPad }]}>
+          {processingCards}
+          {tocCount > 0 ? (
+            <>
+              <Text style={styles.tocLead}>
+                Tytuły i podtytuły wykryte przez AI. Dotknij, aby otworzyć stronę.
+              </Text>
+              <TableOfContentsCard
+                plain
+                entries={tableOfContents}
+                onPressEntry={(entry) => openTocEntry(entry.pageId)}
               />
-            ) : null}
-            <AiQueueCard />
-            {aiQueue.total === 0 && showAiLimitPromo ? (
-              <AiLimitPromoCard
-                count={aiPendingCount}
-                onPress={() => router.push('/subscribe')}
-              />
-            ) : null}
-            {aiQueue.total === 0 && !showAiLimitPromo ? (
-              <AiPromoCard
-                count={aiPendingCount}
-                onPress={openAiMenu}
-                disabled={actionBusy}
-              />
-            ) : null}
-            {pageFilter === 'manual' ? (
-              <View style={styles.filterHint}>
-                <Icon name="alert" size={16} color={colors.warning} />
-                <Text style={styles.filterHintText}>
-                  Jakość OCR poniżej 0,50 lub spójność po AI poniżej 0,60 — przejrzyj tekst ręcznie.
-                </Text>
-              </View>
-            ) : null}
-          </View>
-        }
-        ListEmptyComponent={
-          pageFilter === 'manual' ? (
-            <EmptyState
-              icon="checkCircle"
-              title="Brak stron o niskiej jakości"
-              body="Żadna strona nie ma słabej jakości OCR ani niskiej spójności po korekcie."
-              action={{
-                label: 'Pokaż wszystkie',
-                icon: 'notes',
-                onPress: () => setPageFilter('all'),
-              }}
-            />
+            </>
           ) : (
             <EmptyState
-              icon="camera"
-              title="Brak stron"
-              body="Zrób zdjęcie pierwszej strony — kadrowanie i odczyt tekstu zrobią się same."
-              action={{
-                label: 'Skanuj stronę',
-                icon: 'camera',
-                onPress: () => router.push(`/book/${book.id}/capture`),
-              }}
+              icon="notes"
+              title="Spis treści pusty"
+              body="Uruchom korektę AI — wykryte nagłówki pojawią się tutaj automatycznie."
+              action={
+                aiEligibleCount > 0
+                  ? {
+                      label: 'Uruchom AI',
+                      icon: 'ai',
+                      onPress: openAiMenu,
+                    }
+                  : {
+                      label: 'Przejdź do stron',
+                      icon: 'image',
+                      onPress: () => setMainTab('pages'),
+                    }
+              }
             />
-          )
-        }
-        ItemSeparatorComponent={
-          viewMode === 'grid' ? undefined : () => <View style={{ height: space.lg }} />
-        }
-      />
+          )}
+        </ScrollView>
+      ) : (
+        <>
+          {hasPages ? (
+            <View style={styles.tools}>
+              {manualReviewCount > 0 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: pageFilter === 'manual' }}
+                  onPress={() =>
+                    setPageFilter((current) => (current === 'manual' ? 'all' : 'manual'))
+                  }
+                  style={[
+                    styles.filterChip,
+                    pageFilter === 'manual' && styles.filterChipActive,
+                  ]}>
+                  <Icon
+                    name="alert"
+                    size={14}
+                    color={pageFilter === 'manual' ? colors.warning : colors.muted}
+                  />
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      pageFilter === 'manual' && styles.filterChipTextActive,
+                    ]}>
+                    Do sprawdzenia · {manualReviewCount}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Text style={styles.toolsHint}>{pagesLabel(visiblePages.length)}</Text>
+              )}
+
+              <View style={styles.toolsRight}>
+                {viewMode === 'cards' ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Podgląd tekstu na zdjęciach"
+                    accessibilityState={{ selected: showOcr }}
+                    onPress={() => setShowOcr((value) => !value)}
+                    style={[styles.toolIconBtn, showOcr && styles.toolIconBtnActive]}>
+                    <Icon
+                      name="text"
+                      size={18}
+                      color={showOcr ? colors.primary : colors.inkSoft}
+                    />
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Widok i opcje"
+                  onPress={() => setViewOptionsOpen(true)}
+                  style={styles.toolIconBtn}>
+                  <Icon name="tune" size={18} color={colors.inkSoft} />
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+
+          <FlatList
+            key={`${viewMode}:${pageFilter}`}
+            data={visiblePages}
+            keyExtractor={(item) => item.id}
+            renderItem={renderPage}
+            numColumns={viewMode === 'grid' ? GRID_COLUMNS : 1}
+            columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
+            extraData={`${showOcr}:${viewMode}:${pageFilter}`}
+            showsVerticalScrollIndicator={false}
+            removeClippedSubviews={false}
+            windowSize={viewMode === 'cards' ? 5 : 9}
+            initialNumToRender={viewMode === 'cards' ? 3 : 8}
+            maxToRenderPerBatch={viewMode === 'cards' ? 3 : 8}
+            contentContainerStyle={[styles.feed, { paddingBottom: bottomPad }]}
+            ListHeaderComponent={pagesListHeader}
+            ListEmptyComponent={
+              pageFilter === 'manual' ? (
+                <EmptyState
+                  icon="checkCircle"
+                  title="Brak stron do sprawdzenia"
+                  body="Żadna strona nie ma słabej jakości OCR ani niskiej spójności po korekcie."
+                  action={{
+                    label: 'Pokaż wszystkie',
+                    icon: 'notes',
+                    onPress: () => setPageFilter('all'),
+                  }}
+                />
+              ) : (
+                <EmptyState
+                  icon="camera"
+                  title="Brak stron"
+                  body="Zrób zdjęcie pierwszej strony — kadrowanie i odczyt tekstu zrobią się same."
+                  action={{
+                    label: 'Skanuj stronę',
+                    icon: 'camera',
+                    onPress: () => router.push(`/book/${book.id}/capture`),
+                  }}
+                />
+              )
+            }
+            ItemSeparatorComponent={
+              viewMode === 'grid' ? undefined : () => <View style={{ height: space.md }} />
+            }
+          />
+        </>
+      )}
 
       <View
         pointerEvents="box-none"
         style={[styles.dockWrap, { paddingBottom: insets.bottom + DOCK_BOTTOM_GAP }]}>
         <View style={styles.dock}>
           <DockButton
-            icon="pdf"
-            label="PDF"
+            icon="export"
+            label="Export"
             disabled={!hasPages}
             onPress={() => router.push(`/book/${book.id}/export`)}
           />
           <DockButton
             icon="text"
             label="Tekst"
-            active={showOcr}
             disabled={!hasPages}
-            onPress={() => setShowOcr((value) => !value)}
+            onPress={() => router.push(`/book/${book.id}/text`)}
           />
           <Pressable
             accessibilityRole="button"
@@ -900,6 +1021,66 @@ export default function BookDetailScreen() {
           <DockButton icon="more" label="Więcej" onPress={() => setBookMenu(true)} />
         </View>
       </View>
+
+      <Sheet
+        visible={viewOptionsOpen}
+        onClose={() => setViewOptionsOpen(false)}
+        eyebrow="Widok"
+        title="Jak pokazać strony">
+        <SheetGroup>
+          {VIEW_MODE_OPTIONS.map((option, index) => (
+            <View key={option.id}>
+              {index > 0 ? <SheetDivider /> : null}
+              <Row
+                icon={option.icon}
+                label={option.label}
+                detail={
+                  option.id === 'list'
+                    ? 'Szybki przegląd wielu stron'
+                    : option.id === 'grid'
+                      ? 'Miniatury obok siebie'
+                      : 'Duże zdjęcia z podglądem tekstu'
+                }
+                tone={viewMode === option.id ? 'primary' : 'default'}
+                onPress={() => {
+                  setViewMode(option.id);
+                  setViewOptionsOpen(false);
+                }}
+              />
+            </View>
+          ))}
+        </SheetGroup>
+        {viewMode === 'cards' ? (
+          <SheetGroup>
+            <Row
+              icon="text"
+              label={showOcr ? 'Ukryj tekst na zdjęciach' : 'Pokaż tekst na zdjęciach'}
+              detail="Nakładka OCR / AI na kartach"
+              onPress={() => {
+                setShowOcr((value) => !value);
+                setViewOptionsOpen(false);
+              }}
+            />
+          </SheetGroup>
+        ) : null}
+        {manualReviewCount > 0 ? (
+          <SheetGroup>
+            <Row
+              icon="alert"
+              label={
+                pageFilter === 'manual'
+                  ? 'Pokaż wszystkie strony'
+                  : `Tylko do sprawdzenia (${manualReviewCount})`
+              }
+              detail="Niska jakość OCR lub spójność AI"
+              onPress={() => {
+                setPageFilter((current) => (current === 'manual' ? 'all' : 'manual'));
+                setViewOptionsOpen(false);
+              }}
+            />
+          </SheetGroup>
+        ) : null}
+      </Sheet>
 
       <Sheet
         visible={menuPage != null}
@@ -1026,6 +1207,20 @@ export default function BookDetailScreen() {
           />
           <SheetDivider />
           <Row
+            icon="bookOpen"
+            label="Spis treści"
+            detail={
+              tocCount > 0
+                ? `${tocCount} nagłówków z AI`
+                : 'Pojawi się po korekcie AI'
+            }
+            onPress={() => {
+              setBookMenu(false);
+              setMainTab('toc');
+            }}
+          />
+          <SheetDivider />
+          <Row
             icon="notes"
             label="Cały tekst"
             detail="Podgląd i udostępnianie tekstu"
@@ -1051,8 +1246,9 @@ export default function BookDetailScreen() {
           />
           <SheetDivider />
           <Row
-            icon="pdf"
-            label="Eksport PDF"
+            icon="export"
+            label="Export"
+            detail="TXT · PDF · eBook"
             disabled={!hasPages}
             onPress={() => {
               setBookMenu(false);
@@ -1222,7 +1418,7 @@ function DockButton({
   active,
   disabled,
 }: {
-  icon: 'pdf' | 'text' | 'ai' | 'more';
+  icon: 'export' | 'text' | 'ai' | 'more';
   label: string;
   onPress: () => void;
   active?: boolean;
@@ -1263,14 +1459,77 @@ const styles = StyleSheet.create({
     gap: space.md,
     paddingBottom: space.md,
   },
-  viewModeBar: {
+  tocFeed: {
+    paddingTop: space.sm,
+    gap: space.md,
+  },
+  tocLead: {
+    fontSize: 13.5,
+    fontWeight: '500',
+    color: colors.muted,
+    lineHeight: 19,
+  },
+  mainTabs: {
     marginHorizontal: space.lg,
     marginBottom: space.md,
   },
-  filterBar: {
+  tools: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.md,
     marginHorizontal: space.lg,
     marginBottom: space.md,
-    marginTop: -space.sm,
+  },
+  toolsHint: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  toolsRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+  },
+  toolIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  toolIconBtnActive: {
+    backgroundColor: colors.primarySoft,
+    borderColor: 'rgba(108, 76, 241, 0.28)',
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '70%',
+    paddingHorizontal: space.md,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  filterChipActive: {
+    backgroundColor: colors.warningSoft,
+    borderColor: 'rgba(233, 147, 12, 0.35)',
+  },
+  filterChipText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.muted,
+    letterSpacing: -0.2,
+  },
+  filterChipTextActive: {
+    color: '#A96A05',
   },
   filterHint: {
     flexDirection: 'row',

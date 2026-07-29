@@ -20,6 +20,26 @@ export type OcrQuota = {
   unlimited: boolean;
 };
 
+/** Limit eksportu z backendu — per format. */
+export type ExportFormatQuota = {
+  limit: number | null;
+  used: number;
+  remaining: number | null;
+  unlimited: boolean;
+  allowed: boolean;
+};
+
+export type ExportQuota = {
+  plan: string;
+  period_type: 'day' | 'month' | string;
+  period_key: string;
+  formats: {
+    txt: ExportFormatQuota;
+    pdf: ExportFormatQuota;
+    epub: ExportFormatQuota;
+  };
+};
+
 export type ApiUser = {
   id: number;
   name: string;
@@ -28,6 +48,7 @@ export type ApiUser = {
   roles: string[];
   quota: AiQuota | null;
   ocr_quota: OcrQuota | null;
+  export_quota: ExportQuota | null;
   created_at?: string | null;
 };
 

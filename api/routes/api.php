@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\AiController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ExportController;
 use App\Http\Controllers\Api\OcrController;
 use Illuminate\Support\Facades\Route;
 
@@ -26,6 +27,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/ocr/reserve', [OcrController::class, 'reserve']);
     Route::post('/ocr/consume', [OcrController::class, 'consume']);
     Route::post('/ocr/release', [OcrController::class, 'release']);
+
+    Route::get('/export/quota', [ExportController::class, 'quota']);
+    Route::post('/export/consume', [ExportController::class, 'consume']);
 
     Route::middleware('role:admin')->prefix('admin')->group(function () {
         Route::get('/users', [AdminUserController::class, 'index']);

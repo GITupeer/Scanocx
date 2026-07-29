@@ -798,8 +798,9 @@ export default function LibraryScreen() {
           />
           <View style={styles.sheetDivider} />
           <Row
-            icon="pdf"
-            label="Eksport PDF"
+            icon="export"
+            label="Export"
+            detail="TXT · PDF · eBook"
             onPress={() => {
               const id = sheetBook?.id;
               setSheetBook(null);

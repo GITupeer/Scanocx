@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getDisplayText } from "@/src/ai/displayText";
 import type { Book } from "@/src/domain/types";
+import { buildBookPlainText } from "@/src/export";
 import { getBook } from "@/src/storage/books";
 import {
   AiQueueCard,
@@ -24,15 +25,7 @@ import {
 import { pages as pagesLabel } from "@/src/utils/format";
 
 function buildFullText(book: Book): string {
-  const parts = book.pages.map((page) => {
-    const heading = page.printedPageNumber
-      ? `— Strona ${page.index} (nr ${page.printedPageNumber}) —`
-      : `— Strona ${page.index} —`;
-    const body = getDisplayText(page).trim() || "(brak rozpoznanego tekstu)";
-    return `${heading}\n\n${body}`;
-  });
-
-  return `${book.title}\n\n${parts.join("\n\n\n")}`;
+  return buildBookPlainText(book);
 }
 
 export default function BookTextScreen() {

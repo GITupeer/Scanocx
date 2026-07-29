@@ -12,9 +12,14 @@ class UserResource extends JsonResource
     /**
      * @param  array<string, mixed>|null  $quota
      * @param  array<string, mixed>|null  $ocrQuota
+     * @param  array<string, mixed>|null  $exportQuota
      */
-    public function __construct($resource, private ?array $quota = null, private ?array $ocrQuota = null)
-    {
+    public function __construct(
+        $resource,
+        private ?array $quota = null,
+        private ?array $ocrQuota = null,
+        private ?array $exportQuota = null,
+    ) {
         parent::__construct($resource);
     }
 
@@ -34,6 +39,7 @@ class UserResource extends JsonResource
             'roles' => $user->getRoleNames()->values()->all(),
             'quota' => $this->quota,
             'ocr_quota' => $this->ocrQuota,
+            'export_quota' => $this->exportQuota,
             'created_at' => $user->created_at?->toIso8601String(),
         ];
     }

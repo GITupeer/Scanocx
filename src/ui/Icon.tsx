@@ -21,6 +21,8 @@ const ICONS = {
   gallery: { ios: 'photo.on.rectangle', android: 'photo_library', glyph: '▨' },
   image: { ios: 'photo', android: 'image', glyph: '▨' },
   pdf: { ios: 'doc.richtext.fill', android: 'picture_as_pdf', glyph: 'PDF' },
+  export: { ios: 'arrow.up.doc.fill', android: 'file_upload', glyph: '⤒' },
+  ebook: { ios: 'book.fill', android: 'menu_book', glyph: '▤' },
   text: { ios: 'textformat', android: 'text_fields', glyph: 'Aa' },
   notes: { ios: 'text.alignleft', android: 'notes', glyph: '≡' },
   share: { ios: 'square.and.arrow.up', android: 'ios_share', glyph: '↗' },

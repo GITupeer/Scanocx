@@ -1,5 +1,5 @@
 import { apiRequest } from '@/src/api/client';
-import type { AiBatch, AiQuota, AiUsageItem, ApiUser, AuthResponse, OcrQuota } from '@/src/api/types';
+import type { AiBatch, AiQuota, AiUsageItem, ApiUser, AuthResponse, ExportQuota, OcrQuota } from '@/src/api/types';
 import * as FileSystem from 'expo-file-system/legacy';
 
 export function register(input: {
@@ -100,6 +100,17 @@ export function releaseOcrQuota(count = 1): Promise<OcrQuota> {
   return apiRequest<OcrQuota>('/api/ocr/release', {
     method: 'POST',
     body: { count },
+  });
+}
+
+export function fetchExportQuota(): Promise<ExportQuota> {
+  return apiRequest<ExportQuota>('/api/export/quota');
+}
+
+export function consumeExportQuota(format: 'txt' | 'pdf' | 'epub'): Promise<ExportQuota> {
+  return apiRequest<ExportQuota>('/api/export/consume', {
+    method: 'POST',
+    body: { format },
   });
 }
 

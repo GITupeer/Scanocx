@@ -8,6 +8,7 @@ import { clearAuthToken, getAuthToken, setAuthToken } from '@/src/api/token';
 import type { ApiUser } from '@/src/api/types';
 import { tryResumeOcrQueue } from '@/src/ocr/queue';
 import { applyOcrQuotaFromUser, clearOcrQuota, refreshOcrQuota } from '@/src/ocr/quota';
+import { clearExportQuota, applyExportQuotaFromUser, refreshExportQuota } from '@/src/export/quota';
 
 type AuthContextValue = {
   ready: boolean;
@@ -31,22 +32,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!isApiConfigured()) {
       setUser(null);
       clearOcrQuota();
+      await clearExportQuota();
       return;
     }
     const token = await getAuthToken();
     if (!token) {
       setUser(null);
       clearOcrQuota();
+      await clearExportQuota();
       return;
     }
     try {
       const me = await api.fetchMe();
       setUser(me);
       applyOcrQuotaFromUser(me.ocr_quota);
+      applyExportQuotaFromUser(me.export_quota, me.id);
     } catch {
       await clearAuthToken();
       setUser(null);
       clearOcrQuota();
+      await clearExportQuota();
     }
   }, []);
 
@@ -66,19 +71,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!ready) return;
     if (user == null) {
       clearOcrQuota();
+      void clearExportQuota();
       return;
     }
     applyOcrQuotaFromUser(user.ocr_quota);
+    applyExportQuotaFromUser(user.export_quota, user.id);
     void refreshOcrQuota()
       .then(() => tryResumeOcrQueue())
       .catch(() => undefined);
-  }, [user?.id, user?.plan, user?.ocr_quota?.remaining, ready]);
+    void refreshExportQuota(user.id).catch(() => undefined);
+  }, [user?.id, user?.plan, user?.ocr_quota?.remaining, user?.export_quota?.period_key, ready]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     const result = await api.login({ email, password });
     await setAuthToken(result.token);
     setUser(result.user);
     applyOcrQuotaFromUser(result.user.ocr_quota);
+    applyExportQuotaFromUser(result.user.export_quota, result.user.id);
     return result.user;
   }, []);
 
@@ -92,6 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await setAuthToken(result.token);
     setUser(result.user);
     applyOcrQuotaFromUser(result.user.ocr_quota);
+    applyExportQuotaFromUser(result.user.export_quota, result.user.id);
     return result.user;
   }, []);
 
@@ -104,6 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await clearAuthToken();
     setUser(null);
     clearOcrQuota();
+    await clearExportQuota();
   }, []);
 
   const requireAuth = useCallback(() => user != null, [user]);

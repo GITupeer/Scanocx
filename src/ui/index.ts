@@ -18,6 +18,11 @@ export { AiLimitPromoCard } from './AiLimitPromoCard';
 export { OcrPromoCard } from './OcrPromoCard';
 export { AiQueueCard } from './AiQueueCard';
 export { ScanQueueCard } from './ScanQueueCard';
+export {
+  TableOfContentsCard,
+  buildTableOfContents,
+  type TocEntry,
+} from './TableOfContentsCard';
 export { SegmentedControl, type SegmentOption } from './SegmentedControl';
 export { Sheet, SheetGroup } from './Sheet';
 export {
