@@ -3,9 +3,9 @@ import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { getImageSize } from '@/src/images/ensurePortrait';
 
 /** Długi bok wystarczy Gemini do odczytu tekstu; mniejszy upload i tańsze requesty. */
-const AI_MAX_EDGE = 1600;
+const AI_MAX_EDGE = 1280;
 /** Jakość JPEG pod AI — czytelność tekstu bez megabajtowych plików. */
-const AI_JPEG_QUALITY = 0.72;
+const AI_JPEG_QUALITY = 0.6;
 
 /**
  * Skaluje i kompresuje zdjęcie przed wysyłką do backendu / Google.

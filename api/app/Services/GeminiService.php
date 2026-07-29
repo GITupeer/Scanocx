@@ -60,10 +60,10 @@ Zwróć WYŁĄCZNIE jeden obiekt JSON zgodny ze schematem — bez markdown, kome
 PROMPT;
 
     /** Długi bok JPEG wysyłanego do Google — wystarczy do OCR tekstu. */
-    private const AI_MAX_EDGE = 1600;
+    private const AI_MAX_EDGE = 1280;
 
     /** Jakość JPEG (0–100) przed wysyłką do Gemini. */
-    private const AI_JPEG_QUALITY = 72;
+    private const AI_JPEG_QUALITY = 60;
 
     /**
      * @return array{
