@@ -38,7 +38,18 @@ TWOJE ZADANIE — ODCZYT I KOREKTA:
 
 TWOJE ZADANIE — ANALIZA (do pól JSON):
 11. Wykryj tytuł strony / rozdziału (title) oraz podtytuł (subtitle), jeśli występują jako nagłówki — nie myl z pierwszym zdaniem akapitu.
-12. Oceń jakość skanu / czytelność zdjęcia (ocr_quality) oraz spójność / czytelność tekstu po Twojej korekcie (coherence) w skali 0.00–1.00 (dwa miejsca po przecinku).
+12. Oceń jakość skanu / czytelność zdjęcia (ocr_quality) oraz spójność tekstu po korekcie (coherence) w skali 0.00–1.00 (dwa miejsca po przecinku).
+    ocr_quality — ocena CZYTELNOŚCI SKANU (nie jakości Twojej korekty):
+    - 0.85–1.00: cały tekst ostry, dobrze naświetlony, bez istotnych przeszkód.
+    - 0.50–0.84: drobne problemy (lekka nieostrość, cień, skos), ale treść da się odczytać w całości.
+    - PONIŻEJ 0.50 (obowiązkowo): gdy JAKAKOLWIEK istotna część strony jest nieczytelna lub mocno wątpliwa — rozmycie, prześwietlenie/niedoświetlenie, palec/zasłonięcie, ucięta krawędź z tekstem, mocny cień, odbicie, zbyt mała rozdzielczość.
+      Skala poniżej 0.50 zależnie od skali problemu, np.:
+      - ~0.40–0.49: niewielki fragment (kilka słów / róg) nieczytelny,
+      - ~0.25–0.39: zauważalna część akapitu / kolumny nieczytelna,
+      - ~0.10–0.24: duża część strony nieczytelna,
+      - ~0.00–0.09: niemal cała strona nieczytelna.
+    Jeśli rekonstrukcja fragmentu jest zgadywaniem — obniż ocr_quality poniżej 0.50.
+    coherence — osobno: spójność i czytelność tekstu W corrected_text po Twojej korekcie.
 13. Wykryj numer strony wydrukowany na marginesie (page_number). Jeśli go wykryjesz:
     - wpisz go w pole page_number,
     - USUŃ go z corrected_text (nie zostawiaj samotnego numeru na początku/końcu).
@@ -122,7 +133,7 @@ PROMPT;
                             ],
                             'ocr_quality' => [
                                 'type' => 'NUMBER',
-                                'description' => 'Ocena jakości skanu / czytelności zdjęcia, 0.00–1.00.',
+                                'description' => 'Czytelność skanu 0.00–1.00; poniżej 0.50 gdy część strony jest nieczytelna (im gorzej, tym niżej).',
                             ],
                             'coherence' => [
                                 'type' => 'NUMBER',
