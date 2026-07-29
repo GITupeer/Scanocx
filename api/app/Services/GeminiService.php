@@ -42,12 +42,11 @@ PROMPT;
             throw new RuntimeException('Brak tekstu OCR do korekty.');
         }
 
-        $url = 'https://generativelanguage.googleapis.com/v1beta/models/'.self::MODEL.':generateContent';
+        $url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key='.$apiKey;
 
         $response = Http::timeout(self::TIMEOUT_SECONDS)
             ->withHeaders([
                 'Content-Type' => 'application/json',
-                'x-goog-api-key' => $apiKey,
             ])
             ->post($url, [
                 'system_instruction' => [
