@@ -42,13 +42,11 @@ PROMPT;
             throw new RuntimeException('Brak tekstu OCR do korekty.');
         }
 
-        $url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key='.$apiKey;
+        $endpoint = sprintf('https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent', self::MODEL);
 
         $response = Http::timeout(self::TIMEOUT_SECONDS)
-            ->withHeaders([
-                'Content-Type' => 'application/json',
-            ])
-            ->post($url, [
+            ->withQueryParameters(['key' => $apiKey])
+            ->post($endpoint, [
                 'system_instruction' => [
                     'parts' => [['text' => self::SYSTEM_PROMPT]],
                 ],
@@ -60,25 +58,27 @@ PROMPT;
                 ],
                 'generationConfig' => [
                     'temperature' => 0.2,
-                    'maxOutputTokens' => 8192,
+                    'maxOutputTokens' => 65536,
                 ],
             ]);
 
-        $payload = $response->json() ?? [];
+        $payload =$response->json() ?? [];
 
-        if (! $response->successful()) {
-            $message = data_get($payload, 'error.message') ?? 'Gemini HTTP '.$response->status();
+        if (! $response->successful()) {$message = data_get($payload, 'error.message') ?? 'Gemini HTTP '.$response->status();
             throw new RuntimeException($message);
         }
 
         $finishReason = data_get($payload, 'candidates.0.finishReason');
         if ($finishReason === 'MAX_TOKENS') {
-            throw new RuntimeException('Odpowiedź ucięta (MAX_TOKENS).');
+            throw new RuntimeException('Odpowiedź ucięta (osiągnięto limit MAX_TOKENS).');
         }
 
-        $parts = data_get($payload, 'candidates.0.content.parts', []);
-        $text = '';
-        foreach ($parts as $part) {
+        if ($finishReason && ! in_array($finishReason, ['STOP', 'UNSPECIFIED'], true)) {
+            throw new RuntimeException("Generowanie tekstu przerwane (Reason: {$finishReason}).");
+        }
+
+        $parts = data_get($payload, 'candidates.0.content.parts', []);$text = '';
+        foreach ($parts as$part) {
             $text .= (string) ($part['text'] ?? '');
         }
         $text = $this->stripWrappers(trim($text));
