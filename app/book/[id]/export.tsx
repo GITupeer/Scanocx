@@ -92,13 +92,13 @@ const FORMATS: FormatOption[] = [
   },
 ];
 
-function formatQuotaMeta(format: ExportFormat): string {
+function formatQuotaMeta(format: ExportFormat, loggedIn: boolean): string {
+  if (!loggedIn) return 'Wymaga konta';
   const q = getFormatQuota(format);
   if (format === 'txt') return 'Bez limitu';
   if (format === 'epub') {
     return q.allowed ? 'Bez limitu' : 'Tylko Pro';
   }
-  // pdf
   if (q.unlimited) return 'Bez limitu';
   if ((q.remaining ?? 0) <= 0) return `Limit ${q.limit ?? FREE_PDF_MONTHLY_LIMIT}/mies.`;
   return `${q.remaining}/${q.limit} w tym miesiącu`;
@@ -145,6 +145,13 @@ export default function ExportScreen() {
     })();
   }, [id, router]);
 
+  const promptLogin = () => {
+    Alert.alert('Wymagane logowanie', 'Eksport wymaga konta. Zaloguj się, aby zapisać TXT, PDF lub eBook.', [
+      { text: 'Anuluj', style: 'cancel' },
+      { text: 'Zaloguj', onPress: () => router.push('/login') },
+    ]);
+  };
+
   const promptUpgrade = (format: ExportFormat, message: string) => {
     Alert.alert('Limit eksportu', message, [
       { text: 'Anuluj', style: 'cancel' },
@@ -154,6 +161,10 @@ export default function ExportScreen() {
 
   const onPickFormat = (format: ExportFormat) => {
     if (!book || busyFormat || book.pages.length === 0) return;
+    if (!isLoggedIn) {
+      promptLogin();
+      return;
+    }
     const q = exportQuota.byFormat[format];
     if (!q.allowed || (!q.unlimited && (q.remaining ?? 0) <= 0)) {
       if (format === 'epub') {
@@ -189,10 +200,7 @@ export default function ExportScreen() {
     } catch (error) {
       if (error instanceof ExportCancelledError) return;
       if (error instanceof ExportAuthRequiredError) {
-        Alert.alert('Wymagane logowanie', error.message, [
-          { text: 'Anuluj', style: 'cancel' },
-          { text: 'Zaloguj', onPress: () => router.push('/login') },
-        ]);
+        promptLogin();
         return;
       }
       if (error instanceof ExportQuotaExceededError || error instanceof ExportFormatLockedError) {
@@ -274,7 +282,17 @@ export default function ExportScreen() {
               </View>
             ) : null}
 
-            {exportQuota.byFormat.pdf.limit != null && !exportQuota.byFormat.pdf.unlimited ? (
+            {!isLoggedIn ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={promptLogin}
+                style={({ pressed }) => [styles.infoBanner, pressed && styles.pressed]}>
+                <Icon name="lock" size={16} color={colors.primary} />
+                <Text style={styles.infoText}>
+                  Eksport wymaga konta — zaloguj się, aby zapisać TXT, PDF lub eBook.
+                </Text>
+              </Pressable>
+            ) : exportQuota.byFormat.pdf.limit != null && !exportQuota.byFormat.pdf.unlimited ? (
               <View style={styles.infoBanner}>
                 <Icon name="info" size={16} color={colors.primary} />
                 <Text style={styles.infoText}>
@@ -299,12 +317,16 @@ export default function ExportScreen() {
                 <View style={styles.formatStack}>
                   {FORMATS.map((format) => {
                     const q = exportQuota.byFormat[format.id];
-                    const locked = format.id === 'epub' && !q.allowed;
+                    const needsAuth = !isLoggedIn;
+                    const locked = isLoggedIn && format.id === 'epub' && !q.allowed;
                     const exhausted =
-                      format.id === 'pdf' && !q.unlimited && (q.remaining ?? 0) <= 0;
+                      isLoggedIn &&
+                      format.id === 'pdf' &&
+                      !q.unlimited &&
+                      (q.remaining ?? 0) <= 0;
                     const showPro = locked;
                     const isBusy = busyFormat === format.id;
-                    const dimmed = locked || exhausted;
+                    const dimmed = needsAuth || locked || exhausted;
                     return (
                       <Pressable
                         key={format.id}
@@ -331,7 +353,9 @@ export default function ExportScreen() {
                             ) : null}
                           </View>
                           <Text style={styles.formatDetail}>{format.detail}</Text>
-                          <Text style={styles.formatMeta}>{formatQuotaMeta(format.id)}</Text>
+                          <Text style={styles.formatMeta}>
+                            {formatQuotaMeta(format.id, isLoggedIn)}
+                          </Text>
                         </View>
                         {isBusy ? (
                           <Text style={styles.formatBusy}>…</Text>

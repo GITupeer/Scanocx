@@ -1,13 +1,12 @@
 /**
  * Limity eksportu:
+ * - Gość — brak eksportu (wymagane logowanie)
  * - TXT  — bez limitu (Free + Pro)
  * - PDF  — 20 / miesiąc (Free), bez limitu (Pro)
  * - eBook — niedostępny (Free), bez limitu (Pro)
  *
  * Zalogowany: źródło prawdy = backend (/api/export/*).
- * Gość: lokalny licznik PDF (device) + eBook zablokowany.
  */
-import * as FileSystem from 'expo-file-system/legacy';
 import { useSyncExternalStore } from 'react';
 
 import { isApiConfigured } from '@/src/ai/config';
@@ -45,8 +44,6 @@ export type ExportQuotaSnapshot = {
   remaining: number | null;
 };
 
-type GuestStore = Record<string, { pdf?: number }>;
-
 const ALL_FORMATS = ['txt', 'pdf', 'epub'] as const satisfies readonly ExportFormat[];
 
 function periodKeyNow(): string {
@@ -54,27 +51,15 @@ function periodKeyNow(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-function guestStorePath(): string {
-  const root = FileSystem.documentDirectory;
-  if (!root) throw new Error('Brak katalogu dokumentów.');
-  return `${root}export-quota-guest.json`;
-}
-
-async function readGuestStore(): Promise<GuestStore> {
-  try {
-    const path = guestStorePath();
-    const info = await FileSystem.getInfoAsync(path);
-    if (!info.exists) return {};
-    const raw = await FileSystem.readAsStringAsync(path);
-    const parsed = JSON.parse(raw) as GuestStore;
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-async function writeGuestStore(store: GuestStore): Promise<void> {
-  await FileSystem.writeAsStringAsync(guestStorePath(), JSON.stringify(store));
+function lockedFormat(format: ExportFormat): FormatQuota {
+  return {
+    format,
+    limit: 0,
+    used: 0,
+    remaining: 0,
+    unlimited: false,
+    allowed: false,
+  };
 }
 
 function formatFromApi(
@@ -89,37 +74,6 @@ function formatFromApi(
     unlimited: q.unlimited,
     allowed: q.allowed,
   };
-}
-
-function buildLocalFormatQuota(format: ExportFormat, plan: ExportPlan, pdfUsed: number): FormatQuota {
-  const isPro = plan === 'pro';
-
-  if (format === 'txt') {
-    return { format, limit: null, used: 0, remaining: null, unlimited: true, allowed: true };
-  }
-
-  if (format === 'epub') {
-    if (isPro) {
-      return { format, limit: null, used: 0, remaining: null, unlimited: true, allowed: true };
-    }
-    return {
-      format,
-      limit: FREE_EPUB_MONTHLY_LIMIT,
-      used: 0,
-      remaining: 0,
-      unlimited: false,
-      allowed: false,
-    };
-  }
-
-  if (isPro) {
-    return { format, limit: null, used: pdfUsed, remaining: null, unlimited: true, allowed: true };
-  }
-
-  const limit = FREE_PDF_MONTHLY_LIMIT;
-  const used = Math.max(0, pdfUsed);
-  const remaining = Math.max(0, limit - used);
-  return { format, limit, used, remaining, unlimited: false, allowed: remaining > 0 };
 }
 
 function buildSnapshotFromParts(input: {
@@ -168,23 +122,22 @@ function fromApi(q: ExportQuota, userId: number | null): ExportQuotaSnapshot {
   });
 }
 
-function guestSnapshot(pdfUsed: number, periodKey: string): ExportQuotaSnapshot {
-  const plan: ExportPlan = 'guest';
-  const byFormat = {
-    txt: buildLocalFormatQuota('txt', plan, pdfUsed),
-    pdf: buildLocalFormatQuota('pdf', plan, pdfUsed),
-    epub: buildLocalFormatQuota('epub', plan, pdfUsed),
-  };
+/** Gość — żaden format nie jest dozwolony. */
+function guestSnapshot(): ExportQuotaSnapshot {
   return buildSnapshotFromParts({
     loggedIn: false,
-    plan,
+    plan: 'guest',
     userId: null,
-    periodKey,
-    byFormat,
+    periodKey: periodKeyNow(),
+    byFormat: {
+      txt: lockedFormat('txt'),
+      pdf: lockedFormat('pdf'),
+      epub: lockedFormat('epub'),
+    },
   });
 }
 
-let snapshot: ExportQuotaSnapshot = guestSnapshot(0, periodKeyNow());
+let snapshot: ExportQuotaSnapshot = guestSnapshot();
 const listeners = new Set<() => void>();
 let chain: Promise<unknown> = Promise.resolve();
 
@@ -249,7 +202,7 @@ export class ExportFormatLockedError extends Error {
 
 export class ExportAuthRequiredError extends Error {
   constructor() {
-    super('Eksport PDF i eBook wymaga zalogowania. TXT działa bez konta.');
+    super('Eksport wymaga zalogowania. Zaloguj się, aby zapisać TXT, PDF lub eBook.');
     this.name = 'ExportAuthRequiredError';
   }
 }
@@ -260,28 +213,26 @@ export function applyExportQuotaFromUser(
   userId?: number | null
 ): void {
   if (!exportQuota) {
-    publish(guestSnapshot(0, periodKeyNow()));
+    publish(guestSnapshot());
     return;
   }
   publish(fromApi(exportQuota, userId ?? snapshot.userId));
 }
 
 export async function clearExportQuota(): Promise<void> {
-  const store = await readGuestStore();
-  const periodKey = periodKeyNow();
-  publish(guestSnapshot(store[periodKey]?.pdf ?? 0, periodKey));
+  publish(guestSnapshot());
 }
 
-/** Odśwież z API (zalogowany) albo lokalnego store (gość). */
+/** Odśwież z API (zalogowany) albo stan gościa. */
 export async function refreshExportQuota(userId?: number | null): Promise<ExportQuotaSnapshot> {
   return withLock(async () => {
     if (!isApiConfigured()) {
-      await clearExportQuota();
+      publish(guestSnapshot());
       return snapshot;
     }
     const token = await getAuthToken();
     if (!token) {
-      await clearExportQuota();
+      publish(guestSnapshot());
       return snapshot;
     }
     try {
@@ -294,10 +245,6 @@ export async function refreshExportQuota(userId?: number | null): Promise<Export
   });
 }
 
-/**
- * Sync przy auth: preferuje payload z usera, inaczej fetch.
- * Gość → lokalny store.
- */
 export async function syncExportQuota(input: {
   userId?: number | null;
   plan?: string | null;
@@ -319,12 +266,11 @@ export async function syncExportQuota(input: {
 
 /** Wywołaj przed generowaniem pliku. */
 export function assertExportAllowed(format: ExportFormat): void {
-  const q = snapshot.byFormat[format];
-
-  if (format !== 'txt' && !snapshot.loggedIn && isApiConfigured()) {
-    // PDF/eBook dla gościa: lokalny limit OK; eBook i tak locked
+  if (!snapshot.loggedIn) {
+    throw new ExportAuthRequiredError();
   }
 
+  const q = snapshot.byFormat[format];
   if (!q.allowed && q.limit === 0 && !q.unlimited) {
     throw new ExportFormatLockedError(format);
   }
@@ -334,53 +280,29 @@ export function assertExportAllowed(format: ExportFormat): void {
   }
 }
 
-/** Po udanym eksporcie — backend (zalogowany) lub lokalnie (gość / PDF). */
+/** Po udanym eksporcie — tylko zalogowany (backend). */
 export async function commitExportUsage(format: ExportFormat): Promise<void> {
   return withLock(async () => {
-    if (format === 'txt') return;
-    if (format === 'epub') {
-      // Pro only — backend no-op, gość i tak nie wejdzie
-      if (snapshot.loggedIn && isApiConfigured()) {
-        try {
-          const q = await api.consumeExportQuota('epub');
-          publish(fromApi(q, snapshot.userId));
-        } catch (error) {
-          if (error instanceof ApiError && error.status === 422) {
-            throw new ExportFormatLockedError('epub', error.message);
-          }
-          throw error;
-        }
-      }
-      return;
+    if (!snapshot.loggedIn || !isApiConfigured()) {
+      throw new ExportAuthRequiredError();
     }
 
-    // pdf
-    if (snapshot.loggedIn && isApiConfigured()) {
-      const token = await getAuthToken();
-      if (!token) throw new ExportAuthRequiredError();
-      try {
-        const q = await api.consumeExportQuota('pdf');
-        publish(fromApi(q, snapshot.userId));
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 422) {
-          throw new ExportQuotaExceededError('pdf', error.message);
-        }
-        if (error instanceof ApiError && error.status === 401) {
-          throw new ExportAuthRequiredError();
-        }
-        throw error;
-      }
-      return;
-    }
+    const token = await getAuthToken();
+    if (!token) throw new ExportAuthRequiredError();
 
-    // gość — lokalnie
-    if (snapshot.plan === 'pro') return;
-    const periodKey = periodKeyNow();
-    const store = await readGuestStore();
-    const used = (store[periodKey]?.pdf ?? 0) + 1;
-    store[periodKey] = { pdf: used };
-    await writeGuestStore(store);
-    publish(guestSnapshot(used, periodKey));
+    try {
+      const q = await api.consumeExportQuota(format);
+      publish(fromApi(q, snapshot.userId));
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        throw new ExportAuthRequiredError();
+      }
+      if (error instanceof ApiError && error.status === 422) {
+        if (format === 'epub') throw new ExportFormatLockedError(format, error.message);
+        throw new ExportQuotaExceededError(format, error.message);
+      }
+      throw error;
+    }
   });
 }
 
