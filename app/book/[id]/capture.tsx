@@ -1,35 +1,40 @@
 /**
- * Ekran skanowania — Capture v2
+ * Ekran skanowania — wbudowany skaner w aplikacji.
  *
- * Spust: tylko takePictureAsync.
- * Potem: crop → zapis → opcjonalne OCR (tylko zalogowany; limit na backendzie).
- * Gość i wyczerpany limit: same zdjęcia, bez OCR.
+ * Silnik: react-native-live-detect-edges
+ *  - Android: FairScan / OpenCV
+ *  - iOS: WeScan
+ *
+ * LiveDetectEdgesView = kamera w naszym UI; takePhoto robi crop + wyprostowanie.
  */
-import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
+import { useCameraPermissions } from 'expo-camera';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { setStatusBarStyle } from 'expo-status-bar';
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Alert, LayoutChangeEvent, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LiveDetectEdgesView, takePhoto } from 'react-native-live-detect-edges';
 
-import { CAPTURE_V2_GUIDE, pickFastPictureSize, snapCameraV2 } from '@/src/capture/v2';
-import { cropToGuide } from '@/src/images/cropToGuide';
 import { useAuth } from '@/src/auth/AuthProvider';
-import { runPageOcrExclusive } from '@/src/ocr/queue';
+import { enhanceScanClarity } from '@/src/images/enhanceScanClarity';
+import { enqueueOcrJobs, runPageOcrExclusive } from '@/src/ocr/queue';
 import {
   canRunOcr,
   OcrAuthRequiredError,
   OcrQuotaExceededError,
 } from '@/src/ocr/quota';
-import { addPageFromCameraUri, replacePageFromCameraUri } from '@/src/storage/books';
+import {
+  addPageFromCameraUri,
+  persistPageImageFile,
+  replacePageFromCameraUri,
+} from '@/src/storage/books';
 import {
   Badge,
   Button,
   Gradient,
   Icon,
   IconButton,
-  ScanBeam,
   colors,
   gradients,
   radius,
@@ -37,194 +42,246 @@ import {
   space,
 } from '@/src/ui';
 
-const PREVIEW_ASPECT = 3 / 4; // portretowy kadr 3:4 (kamera ratio 4:3)
-
-type Job = {
-  uri: string;
-  crop: boolean;
-  exifOrientation?: number | null;
+type DeferredPage = {
+  pageId: string;
+  pageIndex: number;
+  imageUri: string;
 };
 
-export default function CaptureScreenV2() {
+function toFileUri(path: string): string {
+  if (!path) return path;
+  if (path.startsWith('file://') || path.startsWith('content://')) return path;
+  return `file://${path}`;
+}
+
+export default function CaptureScreen() {
   const { id, replacePageId } = useLocalSearchParams<{ id: string; replacePageId?: string }>();
   const isReplace = typeof replacePageId === 'string' && replacePageId.length > 0;
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { isLoggedIn } = useAuth();
-
-  const cameraRef = useRef<CameraView>(null);
-  const queueRef = useRef<Job[]>([]);
-  const workingRef = useRef(false);
-  const ocrHintAlertedRef = useRef(false);
-
   const [permission, requestPermission] = useCameraPermissions();
-  const [cameraReady, setCameraReady] = useState(false);
-  const [pictureSize, setPictureSize] = useState<string | undefined>();
-  const [torch, setTorch] = useState(false);
-  const [snapping, setSnapping] = useState(false);
-  const [flash, setFlash] = useState(false);
-  const [pending, setPending] = useState(0);
-  const [recognizingPage, setRecognizingPage] = useState<number | null>(null);
-  const [sessionCount, setSessionCount] = useState(0);
+
+  const ocrHintAlertedRef = useRef(false);
+  const shutterLockRef = useRef(false);
+  const deferredPagesRef = useRef<DeferredPage[]>([]);
+  /** Aktualna wartość trybu — bez przebudowy callbacków przy każdym przełączeniu. */
+  const processLiveRef = useRef(true);
+
+  const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
-  const [area, setArea] = useState({ width: 0, height: 0 });
+  const [sessionCount, setSessionCount] = useState(0);
+  const [flash, setFlash] = useState(false);
+  const [nativeMissing, setNativeMissing] = useState(false);
+  /** true = podbijanie kolorów + OCR od razu po zdjęciu; false = dopiero po zakończeniu. */
+  const [processLive, setProcessLive] = useState(true);
+  processLiveRef.current = processLive;
 
-  const busy = snapping || pending > 0 || recognizingPage != null;
-
-  const notifyOcrSkipped = useCallback(
-    (reason: 'guest' | 'quota') => {
-      if (ocrHintAlertedRef.current) return;
-      ocrHintAlertedRef.current = true;
-      if (reason === 'guest') {
-        Alert.alert(
-          'Tylko zdjęcia',
-          'Bez konta zapisujesz skany lokalnie. Zaloguj się, aby odczytać tekst (OCR) i korzystać z AI.'
-        );
-        return;
-      }
-      Alert.alert(
-        'Limit OCR',
-        'Darmowy plan: 30 odczytów tekstu na miesiąc. Zdjęcia zapisujesz dalej bez limitu — OCR możesz uruchomić później (Pro = nielimitowane).'
-      );
-    },
-    []
-  );
-
-  // Ciemny ekran potrzebuje jasnych ikon paska statusu.
   useFocusEffect(
     useCallback(() => {
       setStatusBarStyle('light');
-      return () => {
-        setStatusBarStyle('dark');
-      };
+      return () => setStatusBarStyle('dark');
     }, [])
   );
 
-  const previewSize = useMemo(() => {
-    if (area.width <= 0 || area.height <= 0) return { width: 0, height: 0 };
-    if (area.width / area.height > PREVIEW_ASPECT) {
-      const height = area.height;
-      return { width: height * PREVIEW_ASPECT, height };
+  const notifyOcrSkipped = useCallback((reason: 'guest' | 'quota') => {
+    if (ocrHintAlertedRef.current) return;
+    ocrHintAlertedRef.current = true;
+    if (reason === 'guest') {
+      Alert.alert(
+        'Tylko zdjęcia',
+        'Bez konta zapisujesz skany lokalnie. Zaloguj się, aby odczytać tekst (OCR) i korzystać z AI.'
+      );
+      return;
     }
-    const width = area.width;
-    return { width, height: width / PREVIEW_ASPECT };
-  }, [area]);
-
-  const onAreaLayout = (event: LayoutChangeEvent) => {
-    const { width, height } = event.nativeEvent.layout;
-    setArea((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
-  };
-
-  const onCameraReady = useCallback(async () => {
-    setCameraReady(true);
-    try {
-      const sizes = await cameraRef.current?.getAvailablePictureSizesAsync();
-      if (sizes?.length) {
-        const picked = pickFastPictureSize(sizes);
-        if (picked) setPictureSize(picked);
-      }
-    } catch {
-      // domyślny rozmiar
-    }
+    Alert.alert(
+      'Limit OCR',
+      'Darmowy plan: 30 odczytów tekstu na miesiąc. Zdjęcia zapisujesz dalej bez limitu — OCR możesz uruchomić później (Pro = nielimitowane).'
+    );
   }, []);
 
-  const processQueue = useCallback(async () => {
-    if (workingRef.current) return;
-    workingRef.current = true;
-
-    while (queueRef.current.length > 0) {
-      const job = queueRef.current.shift();
-      if (!job || !id) continue;
-
+  const tryOcr = useCallback(
+    async (pageIndex: number, pageId: string, imageUri: string) => {
+      if (!id) return;
+      if (!isLoggedIn) {
+        notifyOcrSkipped('guest');
+        setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
+        return;
+      }
+      if (!(await canRunOcr())) {
+        notifyOcrSkipped('quota');
+        setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
+        return;
+      }
+      setHint(`Rozpoznawanie tekstu · strona ${pageIndex}…`);
       try {
-        const preparedUri = job.crop
-          ? await cropToGuide(job.uri, CAPTURE_V2_GUIDE, {
-              exifOrientation: job.exifOrientation,
-            })
-          : job.uri;
-
-        const tryOcr = async (pageIndex: number, pageId: string, imageUri: string, okHint: string) => {
-          if (!isLoggedIn) {
-            notifyOcrSkipped('guest');
-            setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
-            return;
-          }
-          if (!(await canRunOcr())) {
-            notifyOcrSkipped('quota');
-            setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
-            return;
-          }
-          setHint('Rozpoznawanie tekstu…');
-          setRecognizingPage(pageIndex);
-          try {
-            await runPageOcrExclusive(id, pageId, imageUri);
-            setHint(okHint);
-          } catch (error) {
-            if (error instanceof OcrAuthRequiredError) {
-              notifyOcrSkipped('guest');
-              setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
-            } else if (error instanceof OcrQuotaExceededError) {
-              notifyOcrSkipped('quota');
-              setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
-            } else {
-              throw error;
-            }
-          } finally {
-            setRecognizingPage(null);
-          }
-        };
-
-        if (isReplace) {
-          const { page } = await replacePageFromCameraUri(id, replacePageId, preparedUri);
-          await tryOcr(page.index, page.id, page.imageUri, `Podmieniono stronę ${page.index}`);
-          router.replace(`/book/${id}/page/${page.id}`);
-          break;
+        await runPageOcrExclusive(id, pageId, imageUri);
+        setHint(`Gotowe · strona ${pageIndex}`);
+      } catch (error) {
+        if (error instanceof OcrAuthRequiredError) {
+          notifyOcrSkipped('guest');
+          setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
+        } else if (error instanceof OcrQuotaExceededError) {
+          notifyOcrSkipped('quota');
+          setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
+        } else {
+          throw error;
         }
+      }
+    },
+    [id, isLoggedIn, notifyOcrSkipped]
+  );
 
-        const { page } = await addPageFromCameraUri(id, preparedUri);
-        setSessionCount((n) => n + 1);
-        await tryOcr(page.index, page.id, page.imageUri, `Gotowe · strona ${page.index}`);
+  const processDeferredPages = useCallback(async () => {
+    if (!id) return;
+    const pending = deferredPagesRef.current;
+    if (pending.length === 0) return;
+
+    deferredPagesRef.current = [];
+    const enhanced: DeferredPage[] = [];
+
+    for (let i = 0; i < pending.length; i++) {
+      const item = pending[i];
+      setHint(`Podbijam kontrast · ${i + 1}/${pending.length}…`);
+      try {
+        const clearUri = await enhanceScanClarity(item.imageUri);
+        const nextUri = await persistPageImageFile(id, item.pageId, clearUri);
+        enhanced.push({ ...item, imageUri: nextUri });
+      } catch {
+        enhanced.push(item);
+      }
+    }
+
+    if (!isLoggedIn) {
+      notifyOcrSkipped('guest');
+      setHint(`Zapisano · ${enhanced.length} bez OCR`);
+      return;
+    }
+    if (!(await canRunOcr())) {
+      notifyOcrSkipped('quota');
+      setHint(`Zapisano · ${enhanced.length} bez OCR`);
+      return;
+    }
+
+    const queued = enqueueOcrJobs(
+      enhanced.map((page) => ({
+        bookId: id,
+        pageId: page.pageId,
+        pageIndex: page.pageIndex,
+        imageUri: page.imageUri,
+      }))
+    );
+    setHint(
+      queued > 0
+        ? `Kolejka OCR · ${queued} ${queued === 1 ? 'strona' : 'stron'}`
+        : `Gotowe · ${enhanced.length}`
+    );
+  }, [id, isLoggedIn, notifyOcrSkipped]);
+
+  const leaveCapture = useCallback(async () => {
+    if (busy) return;
+    if (deferredPagesRef.current.length > 0) {
+      setBusy(true);
+      try {
+        await processDeferredPages();
       } catch (error) {
         Alert.alert(
           'Błąd',
-          error instanceof Error ? error.message : 'Zapis lub rozpoznawanie tekstu nieudane.'
+          error instanceof Error ? error.message : 'Nie udało się dokończyć przetwarzania.'
         );
       } finally {
-        setPending((n) => Math.max(0, n - 1));
+        setBusy(false);
       }
     }
+    router.back();
+  }, [busy, processDeferredPages, router]);
 
-    workingRef.current = false;
-  }, [id, isLoggedIn, isReplace, notifyOcrSkipped, replacePageId, router]);
+  const saveUri = useCallback(
+    async (rawUri: string) => {
+      if (!id) return;
+      const uri = toFileUri(rawUri);
+      const live = processLiveRef.current;
+      setBusy(true);
+      try {
+        let saveUriPath = uri;
+        if (live) {
+          setHint('Podbijam kontrast…');
+          saveUriPath = await enhanceScanClarity(uri);
+        }
 
-  const enqueue = useCallback(
-    (job: Job) => {
-      queueRef.current.push(job);
-      setPending((n) => n + 1);
-      void processQueue();
+        if (isReplace) {
+          // Podmiana kończy sesję od razu — zawsze dociągamy kontrast + OCR przed wyjściem.
+          let finalUri = saveUriPath;
+          if (!live) {
+            setHint('Podbijam kontrast…');
+            finalUri = await enhanceScanClarity(uri);
+          }
+          setHint('Podmieniam…');
+          const { page } = await replacePageFromCameraUri(id, replacePageId, finalUri);
+          await tryOcr(page.index, page.id, page.imageUri);
+          router.replace(`/book/${id}/page/${page.id}`);
+          return;
+        }
+
+        setHint('Zapisuję…');
+        const { page } = await addPageFromCameraUri(id, saveUriPath);
+        setSessionCount((n) => n + 1);
+
+        if (live) {
+          await tryOcr(page.index, page.id, page.imageUri);
+        } else {
+          deferredPagesRef.current.push({
+            pageId: page.id,
+            pageIndex: page.index,
+            imageUri: page.imageUri,
+          });
+          setHint(`Zapisano · strona ${page.index}`);
+        }
+      } catch (error) {
+        Alert.alert(
+          'Błąd',
+          error instanceof Error ? error.message : 'Nie udało się zapisać skanu.'
+        );
+        setHint(null);
+      } finally {
+        setBusy(false);
+      }
     },
-    [processQueue]
+    [id, isReplace, replacePageId, router, tryOcr]
   );
 
   const onShutter = useCallback(async () => {
-    const cam = cameraRef.current;
-    if (!cam || !cameraReady || busy) return;
+    if (busy || shutterLockRef.current) return;
+    shutterLockRef.current = true;
+    setFlash(true);
+    setTimeout(() => setFlash(false), 70);
+    setHint(isReplace ? 'Skanuję…' : 'Skanuję stronę…');
 
-    setSnapping(true);
     try {
-      const shot = await snapCameraV2(cam);
-      if (!shot) return;
-
-      setFlash(true);
-      setTimeout(() => setFlash(false), 80);
-      setHint(isReplace ? 'Podmieniam…' : 'Zrobione · zapisuję…');
-      enqueue({ uri: shot.uri, crop: true, exifOrientation: shot.exifOrientation });
+      const result = await takePhoto();
+      const cropped = result.image?.uri ?? result.originalImage?.uri;
+      if (!cropped) {
+        Alert.alert('Skan', 'Nie udało się zrobić zdjęcia.');
+        setHint(null);
+        return;
+      }
+      await saveUri(cropped);
     } catch (error) {
-      Alert.alert('Błąd', error instanceof Error ? error.message : 'Nie udało się zrobić zdjęcia.');
+      const message = error instanceof Error ? error.message : String(error);
+      if (/native module|LiveDetect|null|undefined|TurboModule/i.test(message)) {
+        setNativeMissing(true);
+        Alert.alert(
+          'Wymagany nowy build',
+          'Wbudowany skaner krawędzi wymaga nowego development clienta (EAS). Obecna aplikacja go nie zawiera.'
+        );
+      } else {
+        Alert.alert('Błąd', message || 'Nie udało się zeskanować strony.');
+      }
+      setHint(null);
     } finally {
-      setSnapping(false);
+      shutterLockRef.current = false;
     }
-  }, [busy, cameraReady, enqueue, isReplace]);
+  }, [busy, isReplace, saveUri]);
 
   const onGallery = useCallback(async () => {
     if (busy) return;
@@ -233,9 +290,8 @@ export default function CaptureScreenV2() {
       quality: 1,
     });
     if (result.canceled || !result.assets[0]?.uri) return;
-    setHint('Zapisuję…');
-    enqueue({ uri: result.assets[0].uri, crop: false });
-  }, [busy, enqueue]);
+    await saveUri(result.assets[0].uri);
+  }, [busy, saveUri]);
 
   if (!permission) {
     return <View style={styles.root} />;
@@ -249,104 +305,39 @@ export default function CaptureScreenV2() {
         </Gradient>
         <Text style={styles.permTitle}>Potrzebujemy dostępu do kamery</Text>
         <Text style={styles.permBody}>
-          Scanocx skanuje strony lokalnie — zdjęcia nie opuszczają urządzenia.
+          Skaner działa w aplikacji — live krawędzie strony i wyprostowanie po zdjęciu.
         </Text>
         <View style={styles.permActions}>
           <Button label="Udostępnij kamerę" icon="camera" onPress={() => void requestPermission()} />
-          <Button
-            label="Wybierz z galerii"
-            icon="gallery"
-            variant="glass"
-            onPress={() => void onGallery()}
-          />
           <Button label="Wróć" variant="glass" onPress={() => router.back()} />
         </View>
       </View>
     );
   }
 
-  const guide = CAPTURE_V2_GUIDE;
-  const guideHeightPx = Math.round(previewSize.height * guide.height);
   const canLeave = !busy;
-  const shutterLocked = !cameraReady || busy;
+  const shutterLocked = busy;
 
   return (
     <View style={styles.root}>
-      <View style={styles.stage} onLayout={onAreaLayout}>
-        {previewSize.width > 0 ? (
-          <View
-            style={[styles.previewFrame, { width: previewSize.width, height: previewSize.height }]}>
-            <CameraView
-              ref={cameraRef}
-              style={StyleSheet.absoluteFill}
-              facing="back"
-              mode="picture"
-              ratio="4:3"
-              pictureSize={pictureSize}
-              enableTorch={torch}
-              animateShutter={false}
-              onCameraReady={() => {
-                void onCameraReady();
-              }}
-            />
-
-            <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-              <View style={[styles.dim, { top: 0, left: 0, right: 0, height: `${guide.y * 100}%` }]} />
-              <View
-                style={[
-                  styles.dim,
-                  {
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    height: `${(1 - guide.y - guide.height) * 100}%`,
-                  },
-                ]}
-              />
-              <View
-                style={[
-                  styles.dim,
-                  {
-                    top: `${guide.y * 100}%`,
-                    bottom: `${(1 - guide.y - guide.height) * 100}%`,
-                    left: 0,
-                    width: `${guide.x * 100}%`,
-                  },
-                ]}
-              />
-              <View
-                style={[
-                  styles.dim,
-                  {
-                    top: `${guide.y * 100}%`,
-                    bottom: `${(1 - guide.y - guide.height) * 100}%`,
-                    right: 0,
-                    width: `${(1 - guide.x - guide.width) * 100}%`,
-                  },
-                ]}
-              />
-
-              <View
-                style={[
-                  styles.guide,
-                  {
-                    top: `${guide.y * 100}%`,
-                    left: `${guide.x * 100}%`,
-                    width: `${guide.width * 100}%`,
-                    height: `${guide.height * 100}%`,
-                  },
-                ]}>
-                <ScanBeam height={guideHeightPx} active={cameraReady && !busy} />
-                <View style={[styles.corner, styles.cornerTL]} />
-                <View style={[styles.corner, styles.cornerTR]} />
-                <View style={[styles.corner, styles.cornerBL]} />
-                <View style={[styles.corner, styles.cornerBR]} />
-              </View>
-            </View>
-
-            {flash ? <View pointerEvents="none" style={styles.flash} /> : null}
+      <View style={styles.stage}>
+        {!nativeMissing ? (
+          <LiveDetectEdgesView
+            style={StyleSheet.absoluteFill}
+            overlayColor="rgba(16, 191, 160, 0.95)"
+            overlayFillColor="rgba(16, 191, 160, 0.18)"
+            overlayStrokeWidth={3}
+          />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, styles.missing]}>
+            <Text style={styles.missingTitle}>Brak natywnego modułu</Text>
+            <Text style={styles.missingBody}>
+              Zrób nowy build: eas build --profile development
+            </Text>
           </View>
-        ) : null}
+        )}
+
+        {flash ? <View pointerEvents="none" style={styles.flash} /> : null}
 
         <View pointerEvents="box-none" style={[styles.topBar, { paddingTop: insets.top + space.sm }]}>
           <IconButton
@@ -356,44 +347,47 @@ export default function CaptureScreenV2() {
             size={44}
             round
             disabled={!canLeave}
-            onPress={() => router.back()}
+            onPress={() => void leaveCapture()}
           />
-
           <View style={styles.topCenter}>
             <Badge
-              label={isReplace ? 'Podmiana strony' : 'Skanowanie stron'}
+              label={isReplace ? 'Podmiana strony' : 'Skanowanie'}
               tone="glass"
-              icon="frame"
+              icon="scan"
               size="md"
             />
           </View>
-
           <IconButton
-            name={torch ? 'torchOn' : 'torchOff'}
-            accessibilityLabel={torch ? 'Wyłącz latarkę' : 'Włącz latarkę'}
+            name={processLive ? 'bolt' : 'clock'}
+            accessibilityLabel={
+              processLive
+                ? 'Przetwarzanie na żywo włączone. Wyłącz, aby skanować szybciej.'
+                : 'Szybkie skanowanie. Włącz przetwarzanie na żywo.'
+            }
             variant="glass"
             size={44}
             round
-            tint={torch ? colors.warning : colors.white}
-            onPress={() => setTorch((value) => !value)}
+            disabled={busy}
+            tint={processLive ? colors.mint : 'rgba(255,255,255,0.55)'}
+            onPress={() => setProcessLive((v) => !v)}
           />
         </View>
 
-        {recognizingPage != null ? (
-          <View pointerEvents="none" style={[styles.queueChip, { top: insets.top + 68 }]}>
-            <Icon name="ai" size={13} color={colors.white} />
-            <Text style={styles.queueChipText}>Rozpoznawanie tekstu · strona {recognizingPage}</Text>
-          </View>
-        ) : null}
+        <View pointerEvents="none" style={[styles.statusChip, { top: insets.top + 68 }]}>
+          <View style={[styles.statusDot, processLive ? styles.statusDotOn : styles.statusDotOff]} />
+          <Text style={styles.statusText}>
+            {processLive
+              ? 'Celuj w jedną stronę książki'
+              : 'Szybkie skanowanie · Auto po zakończeniu'}
+          </Text>
+        </View>
 
         {hint ? (
           <View pointerEvents="none" style={styles.toast}>
-            <Icon name={recognizingPage != null ? 'ai' : 'check'} size={14} color={colors.white} />
+            <Icon name="check" size={14} color={colors.white} />
             <Text style={styles.toastText}>
               {hint}
-              {!isReplace && sessionCount > 0 && recognizingPage == null
-                ? ` · zdjęć: ${sessionCount}`
-                : ''}
+              {!isReplace && sessionCount > 0 ? ` · zdjęć: ${sessionCount}` : ''}
             </Text>
           </View>
         ) : null}
@@ -420,20 +414,18 @@ export default function CaptureScreenV2() {
 
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={
-            recognizingPage != null
-              ? 'Poczekaj na rozpoznawanie tekstu'
-              : 'Zrób zdjęcie'
-          }
-          disabled={shutterLocked}
+          accessibilityLabel="Zrób zdjęcie strony"
+          disabled={shutterLocked || nativeMissing}
           onPress={() => void onShutter()}
           style={({ pressed }) => [
             styles.shutterWrap,
-            shutterLocked && styles.disabled,
+            (shutterLocked || nativeMissing) && styles.disabled,
             pressed && !shutterLocked ? styles.shutterPressed : null,
           ]}>
           <Gradient colors={gradients.brandVivid} style={styles.shutterRing}>
-            <View style={[styles.shutterCore, busy && styles.shutterCoreBusy]} />
+            <View style={[styles.shutterCore, busy && styles.shutterCoreBusy]}>
+              {busy ? <ActivityIndicator size="large" color={colors.mint} /> : null}
+            </View>
           </Gradient>
         </Pressable>
 
@@ -441,7 +433,7 @@ export default function CaptureScreenV2() {
           accessibilityRole="button"
           accessibilityLabel={isReplace ? 'Anuluj' : 'Gotowe'}
           disabled={!canLeave}
-          onPress={() => router.back()}
+          onPress={() => void leaveCapture()}
           style={({ pressed }) => [
             styles.sideButton,
             pressed && styles.sidePressed,
@@ -465,67 +457,30 @@ const styles = StyleSheet.create({
   stage: {
     flex: 1,
     backgroundColor: '#000',
+    overflow: 'hidden',
+  },
+  missing: {
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'hidden',
+    paddingHorizontal: space.xxl,
+    gap: space.sm,
+    backgroundColor: colors.nightSoft,
   },
-  previewFrame: {
-    overflow: 'hidden',
-    backgroundColor: '#000',
+  missingTitle: {
+    color: colors.white,
+    fontSize: 18,
+    fontWeight: '800',
   },
-  dim: {
-    position: 'absolute',
-    backgroundColor: 'rgba(4, 5, 12, 0.55)',
-  },
-  guide: {
-    position: 'absolute',
-    borderRadius: radius.xs,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.45)',
-    overflow: 'hidden',
-  },
-  corner: {
-    position: 'absolute',
-    width: 26,
-    height: 26,
-    borderColor: colors.white,
-  },
-  cornerTL: {
-    top: -1,
-    left: -1,
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
-    borderTopLeftRadius: radius.xs,
-  },
-  cornerTR: {
-    top: -1,
-    right: -1,
-    borderTopWidth: 3,
-    borderRightWidth: 3,
-    borderTopRightRadius: radius.xs,
-  },
-  cornerBL: {
-    bottom: -1,
-    left: -1,
-    borderBottomWidth: 3,
-    borderLeftWidth: 3,
-    borderBottomLeftRadius: radius.xs,
-  },
-  cornerBR: {
-    bottom: -1,
-    right: -1,
-    borderBottomWidth: 3,
-    borderRightWidth: 3,
-    borderBottomRightRadius: radius.xs,
+  missingBody: {
+    color: 'rgba(255,255,255,0.7)',
+    textAlign: 'center',
+    fontSize: 14,
+    lineHeight: 20,
   },
   flash: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    ...StyleSheet.absoluteFill,
     backgroundColor: '#fff',
-    opacity: 0.55,
+    opacity: 0.5,
   },
   topBar: {
     position: 'absolute',
@@ -541,21 +496,33 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
   },
-  queueChip: {
+  statusChip: {
     position: 'absolute',
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 7,
     paddingHorizontal: space.md,
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderRadius: radius.pill,
-    backgroundColor: 'rgba(108, 76, 241, 0.92)',
-    ...shadow.soft,
+    backgroundColor: 'rgba(10, 12, 20, 0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
-  queueChipText: {
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  statusDotOn: {
+    backgroundColor: colors.mint,
+  },
+  statusDotOff: {
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  statusText: {
     color: colors.white,
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '700',
   },
   toast: {
@@ -622,12 +589,11 @@ const styles = StyleSheet.create({
     height: 64,
     borderRadius: 32,
     backgroundColor: colors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   shutterCoreBusy: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.85)',
+    backgroundColor: 'rgba(255,255,255,0.92)',
   },
   shutterPressed: {
     transform: [{ scale: 0.94 }],

@@ -35,6 +35,9 @@ import {
   useOcrQueue,
 } from '@/src/ocr/queue';
 import {
+  formatConfidenceQualityLabel,
+} from '@/src/ocr/quality';
+import {
   getOcrRemaining,
   OcrAuthRequiredError,
   OcrQuotaExceededError,
@@ -112,6 +115,43 @@ function ocrOverlayCopy(page: BookPage): string {
   if (page.ocrStatus === 'error') return 'Nie udało się odczytać tekstu z tej strony.';
   const text = getDisplayText(page).trim();
   return text.length > 0 ? text : 'Brak rozpoznanego tekstu.';
+}
+
+function OcrQualityChips({ page }: { page: BookPage }) {
+  if (page.ocrStatus !== 'done' || !page.ocrQuality) return null;
+
+  const { confidence } = page.ocrQuality;
+  const confidenceTone = !confidence.available
+    ? 'neutral'
+    : confidence.weak
+      ? 'warn'
+      : 'ok';
+
+  return (
+    <View style={styles.qualityRow}>
+      <View
+        style={[
+          styles.qualityChip,
+          confidenceTone === 'warn'
+            ? styles.qualityChipWarn
+            : confidenceTone === 'ok'
+              ? styles.qualityChipOk
+              : styles.qualityChipNeutral,
+        ]}>
+        <Text
+          style={[
+            styles.qualityChipText,
+            confidenceTone === 'warn'
+              ? styles.qualityChipTextWarn
+              : confidenceTone === 'ok'
+                ? styles.qualityChipTextOk
+                : styles.qualityChipTextNeutral,
+          ]}>
+          {formatConfidenceQualityLabel(confidence)}
+        </Text>
+      </View>
+    </View>
+  );
 }
 
 export default function BookDetailScreen() {
@@ -536,6 +576,8 @@ export default function BookDetailScreen() {
           <Icon name="more" size={18} color={colors.faint} />
         </Pressable>
 
+        <OcrQualityChips page={item} />
+
         <View style={styles.imageFrame}>
           <Pressable
             style={StyleSheet.absoluteFill}
@@ -678,7 +720,7 @@ export default function BookDetailScreen() {
             {aiQueue.total === 0 && showAiLimitPromo ? (
               <AiLimitPromoCard
                 count={aiPendingCount}
-                onPress={() => router.push('/usage')}
+                onPress={() => router.push('/subscribe')}
               />
             ) : null}
             {aiQueue.total === 0 && !showAiLimitPromo ? (
@@ -1029,6 +1071,45 @@ const styles = StyleSheet.create({
   pageSubtitle: {
     fontSize: 12,
     fontWeight: '600',
+    color: colors.muted,
+  },
+  qualityRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    paddingHorizontal: space.md,
+    paddingBottom: space.sm,
+  },
+  qualityChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+  },
+  qualityChipOk: {
+    backgroundColor: colors.successSoft,
+    borderColor: 'rgba(16, 191, 160, 0.28)',
+  },
+  qualityChipWarn: {
+    backgroundColor: colors.warningSoft,
+    borderColor: 'rgba(233, 147, 12, 0.3)',
+  },
+  qualityChipNeutral: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.line,
+  },
+  qualityChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: -0.1,
+  },
+  qualityChipTextOk: {
+    color: '#0A8C77',
+  },
+  qualityChipTextWarn: {
+    color: '#A96A05',
+  },
+  qualityChipTextNeutral: {
     color: colors.muted,
   },
   imageFrame: {

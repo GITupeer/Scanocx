@@ -1,7 +1,11 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
-import type { AiStatus, Book, BookPage, BookSummary, OcrStatus } from '@/src/domain/types';
+import type { AiStatus, Book, BookPage, BookSummary, OcrQuality, OcrStatus } from '@/src/domain/types';
 import { ensurePortraitUri, rotateUri } from '@/src/images/ensurePortrait';
+import {
+  scheduleBookSearchIndex,
+  scheduleRemoveBookSearchIndex,
+} from '@/src/search/index';
 import { createId } from '@/src/storage/id';
 import {
   bookCoverPath,
@@ -14,11 +18,17 @@ import {
 
 function normalizePage(page: BookPage): BookPage {
   const ocrStatus = page.ocrStatus ?? 'idle';
+  const rawQuality = page.ocrQuality ?? null;
+  const ocrQuality =
+    rawQuality && rawQuality.confidence
+      ? { confidence: rawQuality.confidence }
+      : null;
   return {
     ...page,
     ocrText: page.ocrText ?? '',
     aiText: page.aiText ?? '',
     printedPageNumber: page.printedPageNumber ?? null,
+    ocrQuality,
     ocrStatus:
       ocrStatus === 'idle' ||
       ocrStatus === 'pending' ||
@@ -68,6 +78,7 @@ async function writeBook(book: Book): Promise<Book> {
   await ensureDir(bookDir(book.id));
   await ensureDir(bookPagesDir(book.id));
   await FileSystem.writeAsStringAsync(bookMetaPath(book.id), JSON.stringify(updated, null, 2));
+  scheduleBookSearchIndex(updated);
   return updated;
 }
 
@@ -148,6 +159,7 @@ export async function deleteBook(bookId: string): Promise<void> {
   if (info.exists) {
     await FileSystem.deleteAsync(dir, { idempotent: true });
   }
+  scheduleRemoveBookSearchIndex(bookId);
 }
 
 export async function addPageFromImage(
@@ -175,6 +187,7 @@ export async function addPageFromImage(
     ocrText: '',
     ...freshAiFields(),
     printedPageNumber: null,
+    ocrQuality: null,
     ocrStatus: 'idle',
     createdAt: new Date().toISOString(),
   };
@@ -206,6 +219,7 @@ export async function addPageFromCameraUri(
     ocrText: '',
     ...freshAiFields(),
     printedPageNumber: null,
+    ocrQuality: null,
     ocrStatus: 'idle',
     createdAt: new Date().toISOString(),
   };
@@ -222,6 +236,7 @@ export async function updatePageOcr(
     ocrText?: string;
     ocrStatus?: OcrStatus;
     printedPageNumber?: string | null;
+    ocrQuality?: OcrQuality | null;
     /** Gdy true (domyślnie przy zmianie ocrText), kasuje wynik AI — wymaga ponownej korekty. */
     resetAi?: boolean;
   }
@@ -242,6 +257,8 @@ export async function updatePageOcr(
         patch.printedPageNumber !== undefined
           ? patch.printedPageNumber
           : (page.printedPageNumber ?? null),
+      ocrQuality:
+        patch.ocrQuality !== undefined ? patch.ocrQuality : (page.ocrQuality ?? null),
       ...(shouldResetAi ? freshAiFields() : {}),
     };
   });
@@ -349,6 +366,7 @@ export async function replacePageImage(
     ocrText: '',
     ...freshAiFields(),
     printedPageNumber: null,
+    ocrQuality: null,
     ocrStatus: 'idle',
   };
 
@@ -384,6 +402,7 @@ export async function replacePageFromCameraUri(
     ocrText: '',
     ...freshAiFields(),
     printedPageNumber: null,
+    ocrQuality: null,
     ocrStatus: 'idle',
   };
 

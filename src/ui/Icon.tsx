@@ -61,6 +61,9 @@ const ICONS = {
   play: { ios: 'play.fill', android: 'play_arrow', glyph: '▶' },
   pause: { ios: 'pause.fill', android: 'pause', glyph: '⏸' },
   stats: { ios: 'chart.bar.fill', android: 'bar_chart', glyph: '▥' },
+  menu: { ios: 'line.3.horizontal', android: 'menu', glyph: '☰' },
+  chevronDown: { ios: 'chevron.down', android: 'expand_more', glyph: '▾' },
+  home: { ios: 'house.fill', android: 'home', glyph: '⌂' },
 } as const;
 
 export type IconName = keyof typeof ICONS;

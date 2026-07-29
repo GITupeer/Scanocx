@@ -4,6 +4,7 @@ import type { RecognitionResult } from 'expo-mlkit-ocr';
 import { enhanceForOcr, type EnhanceForOcrOptions } from '@/src/images/enhanceForOcr';
 import { ensurePortraitUri, rotateUri } from '@/src/images/ensurePortrait';
 import { extractPrintedPageNumber } from '@/src/ocr/extractPageNumber';
+import { assessOcrQuality } from '@/src/ocr/quality';
 import {
   assertOcrAllowed,
   commitOcrSlot,
@@ -61,7 +62,7 @@ export async function runPageOcr(
   let reserved = true;
 
   try {
-    await updatePageOcr(bookId, pageId, { ocrStatus: 'pending', resetAi: true });
+    await updatePageOcr(bookId, pageId, { ocrStatus: 'pending', ocrQuality: null, resetAi: true });
 
     if (!isOcrAvailable()) {
       throw new Error(
@@ -88,10 +89,12 @@ export async function runPageOcr(
     await persistPageImageFile(bookId, pageId, visualUri);
 
     const { printedPageNumber, cleanedText } = extractPrintedPageNumber(result);
+    const ocrQuality = assessOcrQuality(result);
 
     await updatePageOcr(bookId, pageId, {
       ocrText: cleanedText,
       printedPageNumber,
+      ocrQuality,
       ocrStatus: 'done',
       resetAi: true,
     });
@@ -103,7 +106,7 @@ export async function runPageOcr(
     if (reserved) {
       await releaseOcrSlot().catch(() => undefined);
     }
-    await updatePageOcr(bookId, pageId, { ocrStatus: 'error', resetAi: false });
+    await updatePageOcr(bookId, pageId, { ocrStatus: 'error', ocrQuality: null, resetAi: false });
     throw error;
   }
 }

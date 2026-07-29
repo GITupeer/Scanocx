@@ -4,6 +4,19 @@ export type OcrStatus = 'idle' | 'pending' | 'done' | 'error';
 /** Stan korekty Gemini: idle = jeszcze nie uruchomiona / unieważniona. */
 export type AiStatus = 'idle' | 'pending' | 'done' | 'error';
 
+/** Metryki jakości OCR zapisane przy odczycie. */
+export type OcrConfidenceQuality = {
+  available: boolean;
+  elementCount: number;
+  average: number | null;
+  lowRatio: number | null;
+  weak: boolean;
+};
+
+export type OcrQuality = {
+  confidence: OcrConfidenceQuality;
+};
+
 export type BookPage = {
   id: string;
   index: number;
@@ -14,6 +27,8 @@ export type BookPage = {
   aiText: string;
   /** Numer wydrukowany na stronie książki (np. "12", "xiv"), jeśli wykryty. */
   printedPageNumber: string | null;
+  /** Jakość układu i pewności z ostatniego OCR; null gdy brak odczytu. */
+  ocrQuality: OcrQuality | null;
   ocrStatus: OcrStatus;
   aiStatus: AiStatus;
   /** Ostatni komunikat błędu Gemini; null gdy brak / sukces. */

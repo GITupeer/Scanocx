@@ -71,6 +71,8 @@ export const gradients = {
   brandVivid: ['#8B5CFF', '#5A7DFF', '#22C3D6'] as const,
   aurora: ['#EFE9FF', '#E7F0FF', '#F5F6FC'] as const,
   auroraWarm: ['#FFE9F4', '#EDE9FF', '#F5F6FC'] as const,
+  /** Hero Home — pastelowy sky blue → lavender jak na mockupu. */
+  homeHero: ['#8EC8FB', '#B5B4F5', '#D4C4FC'] as const,
   mint: ['#14C9A6', '#2FA8E8'] as const,
   amber: ['#F7B733', '#EE7752'] as const,
   rose: ['#F3766B', '#E24B41'] as const,
@@ -92,12 +94,12 @@ export const space = {
 } as const;
 
 export const radius = {
-  xs: 8,
-  sm: 12,
-  md: 16,
-  lg: 20,
-  xl: 26,
-  xxl: 32,
+  xs: 4,
+  sm: 6,
+  md: 10,
+  lg: 12,
+  xl: 14,
+  xxl: 18,
   pill: 999,
 } as const;
 

@@ -150,6 +150,109 @@ export function FadeInUp({
   );
 }
 
+/**
+ * Ambientowe „świetlne” orbity w hero Home — wolny dryf + oddech.
+ * Umieścić jako pierwsze dziecko kontenera z overflow: hidden.
+ */
+export function HomeHeroOrbs() {
+  const driftA = useRef(new Animated.Value(0)).current;
+  const driftB = useRef(new Animated.Value(0)).current;
+  const driftC = useRef(new Animated.Value(0)).current;
+  const breath = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loopDrift = (value: Animated.Value, duration: number, delay = 0) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(value, {
+            toValue: 1,
+            duration,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(value, {
+            toValue: 0,
+            duration,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ]),
+      );
+
+    const loops = [
+      loopDrift(driftA, 5600),
+      loopDrift(driftB, 7200, 400),
+      loopDrift(driftC, 8400, 900),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(breath, {
+            toValue: 1,
+            duration: 4200,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(breath, {
+            toValue: 0,
+            duration: 4200,
+            easing: Easing.inOut(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]),
+      ),
+    ];
+    loops.forEach((loop) => loop.start());
+    return () => loops.forEach((loop) => loop.stop());
+  }, [breath, driftA, driftB, driftC]);
+
+  const orbA = {
+    opacity: driftA.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.28, 0.48, 0.28] }),
+    transform: [
+      { translateX: driftA.interpolate({ inputRange: [0, 1], outputRange: [0, 28] }) },
+      { translateY: driftA.interpolate({ inputRange: [0, 1], outputRange: [0, 18] }) },
+      { scale: breath.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) },
+    ],
+  };
+
+  const orbB = {
+    opacity: driftB.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.22, 0.4, 0.22] }),
+    transform: [
+      { translateX: driftB.interpolate({ inputRange: [0, 1], outputRange: [0, -34] }) },
+      { translateY: driftB.interpolate({ inputRange: [0, 1], outputRange: [0, 22] }) },
+      { scale: breath.interpolate({ inputRange: [0, 1], outputRange: [1.05, 0.92] }) },
+    ],
+  };
+
+  const orbC = {
+    opacity: driftC.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.18, 0.36, 0.18] }),
+    transform: [
+      { translateX: driftC.interpolate({ inputRange: [0, 1], outputRange: [-12, 20] }) },
+      { translateY: driftC.interpolate({ inputRange: [0, 1], outputRange: [10, -16] }) },
+      { scale: driftC.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1.15] }) },
+    ],
+  };
+
+  const sheenX = driftA.interpolate({ inputRange: [0, 1], outputRange: [-80, 120] });
+  const sheenOpacity = breath.interpolate({
+    inputRange: [0, 0.45, 1],
+    outputRange: [0.06, 0.16, 0.06],
+  });
+
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <Animated.View style={[styles.heroOrb, styles.heroOrbA, orbA]} />
+      <Animated.View style={[styles.heroOrb, styles.heroOrbB, orbB]} />
+      <Animated.View style={[styles.heroOrb, styles.heroOrbC, orbC]} />
+      <Animated.View
+        style={[
+          styles.heroSheen,
+          { opacity: sheenOpacity, transform: [{ translateX: sheenX }, { rotate: '-18deg' }] },
+        ]}
+      />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   center: {
     alignItems: 'center',
@@ -170,5 +273,37 @@ const styles = StyleSheet.create({
   beamFill: {
     flex: 1,
     borderRadius: radius.pill,
+  },
+  heroOrb: {
+    position: 'absolute',
+    borderRadius: 999,
+  },
+  heroOrbA: {
+    width: 220,
+    height: 220,
+    top: -70,
+    right: -50,
+    backgroundColor: 'rgba(255,255,255,0.55)',
+  },
+  heroOrbB: {
+    width: 180,
+    height: 180,
+    top: 40,
+    left: -80,
+    backgroundColor: 'rgba(180,160,255,0.55)',
+  },
+  heroOrbC: {
+    width: 140,
+    height: 140,
+    bottom: 20,
+    right: 40,
+    backgroundColor: 'rgba(255,255,255,0.4)',
+  },
+  heroSheen: {
+    position: 'absolute',
+    top: -40,
+    bottom: -40,
+    width: 70,
+    backgroundColor: 'rgba(255,255,255,0.55)',
   },
 });

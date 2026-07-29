@@ -1,11 +1,11 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useMemo, useState } from "react";
+import { Alert, ScrollView, Share, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { getDisplayText } from '@/src/ai/displayText';
-import type { Book } from '@/src/domain/types';
-import { getBook } from '@/src/storage/books';
+import { getDisplayText } from "@/src/ai/displayText";
+import type { Book } from "@/src/domain/types";
+import { getBook } from "@/src/storage/books";
 import {
   AiQueueCard,
   AppBar,
@@ -20,19 +20,19 @@ import {
   radius,
   shadow,
   space,
-} from '@/src/ui';
-import { pages as pagesLabel } from '@/src/utils/format';
+} from "@/src/ui";
+import { pages as pagesLabel } from "@/src/utils/format";
 
 function buildFullText(book: Book): string {
   const parts = book.pages.map((page) => {
     const heading = page.printedPageNumber
       ? `— Strona ${page.index} (nr ${page.printedPageNumber}) —`
       : `— Strona ${page.index} —`;
-    const body = getDisplayText(page).trim() || '(brak rozpoznanego tekstu)';
+    const body = getDisplayText(page).trim() || "(brak rozpoznanego tekstu)";
     return `${heading}\n\n${body}`;
   });
 
-  return `${book.title}\n\n${parts.join('\n\n\n')}`;
+  return `${book.title}\n\n${parts.join("\n\n\n")}`;
 }
 
 export default function BookTextScreen() {
@@ -49,7 +49,10 @@ export default function BookTextScreen() {
         const data = await getBook(id);
         setBook(data);
       } catch (error) {
-        Alert.alert('Błąd', error instanceof Error ? error.message : 'Nie znaleziono książki.');
+        Alert.alert(
+          "Błąd",
+          error instanceof Error ? error.message : "Nie znaleziono książki.",
+        );
         router.back();
       } finally {
         setLoading(false);
@@ -57,14 +60,17 @@ export default function BookTextScreen() {
     })();
   }, [id, router]);
 
-  const fullText = useMemo(() => (book ? buildFullText(book) : ''), [book]);
+  const fullText = useMemo(() => (book ? buildFullText(book) : ""), [book]);
 
   const onShareText = async () => {
     if (!book || !fullText.trim()) return;
     try {
       await Share.share({ message: fullText, title: book.title });
     } catch (error) {
-      Alert.alert('Udostępnianie', error instanceof Error ? error.message : 'Nie udało się udostępnić.');
+      Alert.alert(
+        "Udostępnianie",
+        error instanceof Error ? error.message : "Nie udało się udostępnić.",
+      );
     }
   };
 
@@ -72,10 +78,14 @@ export default function BookTextScreen() {
     return <Loader label="Składam tekst…" />;
   }
 
-  const pending = book.pages.filter((p) => p.ocrStatus === 'pending' || p.aiStatus === 'pending').length;
-  const errors = book.pages.filter((p) => p.ocrStatus === 'error' || p.aiStatus === 'error').length;
+  const pending = book.pages.filter(
+    (p) => p.ocrStatus === "pending" || p.aiStatus === "pending",
+  ).length;
+  const errors = book.pages.filter(
+    (p) => p.ocrStatus === "error" || p.aiStatus === "error",
+  ).length;
   const empty = book.pages.filter((p) => !getDisplayText(p).trim()).length;
-  const aiDone = book.pages.filter((p) => p.aiStatus === 'done').length;
+  const aiDone = book.pages.filter((p) => p.aiStatus === "done").length;
 
   return (
     <View style={styles.root}>
@@ -100,16 +110,33 @@ export default function BookTextScreen() {
         contentContainerStyle={[
           styles.content,
           { paddingBottom: 92 + Math.max(insets.bottom, space.md) },
-        ]}>
+        ]}
+      >
         <ScanQueueCard />
         <AiQueueCard />
 
         {pending > 0 || errors > 0 || empty > 0 || aiDone > 0 ? (
           <View style={styles.chips}>
-            {aiDone > 0 ? <Badge label={`AI: ${aiDone}`} tone="success" icon="ai" /> : null}
-            {pending > 0 ? <Badge label={`w analizie: ${pending}`} tone="primary" icon="ai" /> : null}
-            {errors > 0 ? <Badge label={`błędy: ${errors}`} tone="danger" icon="alert" /> : null}
-            {empty > 0 ? <Badge label={`bez tekstu: ${empty}`} tone="warning" icon="pending" /> : null}
+            {aiDone > 0 ? (
+              <Badge label={`AI: ${aiDone}`} tone="success" icon="ai" />
+            ) : null}
+            {pending > 0 ? (
+              <Badge
+                label={`w analizie: ${pending}`}
+                tone="primary"
+                icon="ai"
+              />
+            ) : null}
+            {errors > 0 ? (
+              <Badge label={`błędy: ${errors}`} tone="danger" icon="alert" />
+            ) : null}
+            {empty > 0 ? (
+              <Badge
+                label={`bez tekstu: ${empty}`}
+                tone="warning"
+                icon="pending"
+              />
+            ) : null}
           </View>
         ) : null}
 
@@ -125,16 +152,20 @@ export default function BookTextScreen() {
             return (
               <View key={page.id} style={styles.pageBlock}>
                 <View style={styles.pageHeading}>
-                  <Text style={styles.pageHeadingText}>Strona {page.index}</Text>
+                  <Text style={styles.pageHeadingText}>
+                    Strona {page.index}
+                  </Text>
                   {page.printedPageNumber ? (
-                    <Text style={styles.pageHeadingNumber}>nr {page.printedPageNumber}</Text>
+                    <Text style={styles.pageHeadingNumber}>
+                      nr {page.printedPageNumber}
+                    </Text>
                   ) : null}
-                  {page.aiStatus === 'done' ? (
+                  {page.aiStatus === "done" ? (
                     <Text style={styles.pageHeadingNumber}>· AI</Text>
                   ) : null}
                 </View>
                 <Text style={[styles.pageBody, !body && styles.pageBodyEmpty]}>
-                  {body || '(brak rozpoznanego tekstu)'}
+                  {body || "(brak rozpoznanego tekstu)"}
                 </Text>
               </View>
             );
@@ -144,7 +175,11 @@ export default function BookTextScreen() {
 
       <View
         pointerEvents="box-none"
-        style={[styles.dockWrap, { paddingBottom: Math.max(insets.bottom, space.md) }]}>
+        style={[
+          styles.dockWrap,
+          { paddingBottom: Math.max(insets.bottom, space.md) },
+        ]}
+      >
         <Button
           label="Udostępnij cały tekst"
           icon="share"
@@ -167,8 +202,8 @@ const styles = StyleSheet.create({
     gap: space.xl,
   },
   chips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: space.sm,
   },
   pageBlock: {
@@ -181,13 +216,13 @@ const styles = StyleSheet.create({
     ...shadow.soft,
   },
   pageHeading: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: space.sm,
   },
   pageHeadingText: {
     ...font.caption,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     color: colors.primary,
   },
   pageHeadingNumber: {
@@ -198,14 +233,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 26,
     color: colors.ink,
-    fontWeight: '400',
+    fontWeight: "400",
   },
   pageBodyEmpty: {
     color: colors.faint,
-    fontStyle: 'italic',
+    fontStyle: "italic",
   },
   dockWrap: {
-    position: 'absolute',
+    position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,

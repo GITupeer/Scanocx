@@ -7,7 +7,8 @@ use RuntimeException;
 
 class GeminiService
 {
-    public const MODEL = 'gemini-3.1-flash-lite';
+    public const MODEL = 'gemini-2.5-flash-lite';
+    // public const MODEL = 'gemini-3.1-flash-lite';
 
     public const TIMEOUT_SECONDS = 120;
 

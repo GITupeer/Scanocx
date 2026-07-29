@@ -36,15 +36,19 @@ export function BookCover({
   title,
   coverUri,
   width = 52,
+  height: heightProp,
+  radius: radiusProp,
   style,
 }: {
   title: string;
   coverUri?: string | null;
   width?: number;
+  height?: number;
+  radius?: number;
   style?: StyleProp<ViewStyle>;
 }) {
-  const height = Math.round(width * 1.34);
-  const borderRadius = Math.max(8, Math.round(width * 0.22));
+  const height = heightProp ?? Math.round(width * 1.34);
+  const borderRadius = radiusProp ?? Math.max(4, Math.round(width * 0.1));
 
   if (coverUri) {
     return (

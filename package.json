@@ -29,6 +29,7 @@
     "expo-sensors": "~57.0.2",
     "expo-sharing": "~57.0.7",
     "expo-splash-screen": "~57.0.5",
+    "expo-sqlite": "~57.0.1",
     "expo-status-bar": "~57.0.1",
     "expo-symbols": "~57.0.1",
     "expo-updates": "~57.0.10",
@@ -38,6 +39,7 @@
     "react-dom": "19.2.3",
     "react-native": "0.86.0",
     "react-native-gesture-handler": "~3.1.0",
+    "react-native-live-detect-edges": "^0.3.1",
     "react-native-reanimated": "4.5.0",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
@@ -47,6 +49,7 @@
   "devDependencies": {
     "@types/jpeg-js": "^0.3.0",
     "@types/react": "~19.2.2",
+    "patch-package": "^8.0.1",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -54,6 +57,7 @@
     "android": "expo start --dev-client --android",
     "ios": "expo start --dev-client --ios",
     "web": "expo start --web",
+    "postinstall": "patch-package",
     "update:dev": "eas update --channel development --message",
     "update:preview": "eas update --channel preview --message"
   },

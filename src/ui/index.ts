@@ -11,7 +11,7 @@ export { SearchField, TextField } from './Field';
 export { Gradient } from './Gradient';
 export { Icon, type IconName } from './Icon';
 export { BusyOverlay, Loader } from './Loader';
-export { AiPulse, FadeInUp, ScanBeam } from './Motion';
+export { AiPulse, FadeInUp, HomeHeroOrbs, ScanBeam } from './Motion';
 export { ProgressBar } from './Progress';
 export { AiPromoCard } from './AiPromoCard';
 export { AiLimitPromoCard } from './AiLimitPromoCard';

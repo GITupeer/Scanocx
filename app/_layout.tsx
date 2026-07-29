@@ -6,6 +6,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 
 import { AuthProvider } from '@/src/auth/AuthProvider';
+import { rebuildSearchIndex } from '@/src/search/rebuild';
 import { colors } from '@/src/ui/theme';
 
 export { ErrorBoundary } from 'expo-router';
@@ -13,6 +14,9 @@ export { ErrorBoundary } from 'expo-router';
 export default function RootLayout() {
   useEffect(() => {
     void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    void rebuildSearchIndex().catch((error) => {
+      console.warn('[search] rebuild failed', error);
+    });
   }, []);
 
   return (
@@ -33,6 +37,7 @@ export default function RootLayout() {
           <Stack.Screen name="reset-password" />
           <Stack.Screen name="profile" />
           <Stack.Screen name="usage" />
+          <Stack.Screen name="subscribe" />
           <Stack.Screen name="admin/users" />
           <Stack.Screen name="book/[id]/index" />
           <Stack.Screen name="book/[id]/capture" options={{ animation: 'fade_from_bottom' }} />

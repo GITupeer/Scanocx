@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from './Icon';
 import { BOTTOM_NAV_HEIGHT, colors, radius, shadow, space } from './theme';
 
-export type NavTab = 'library';
+export type NavTab = 'library' | 'profile';
 
 const FAB_SIZE = 48;
 /** Lekki odstęp między paskiem a home indicator / dolną krawędzią. */
@@ -35,18 +35,18 @@ export function BottomNav({ active, onScan, scanBadge }: Props) {
         <Pressable
           accessibilityRole="tab"
           accessibilityState={{ selected: active === 'library' }}
-          accessibilityLabel="Biblioteka"
+          accessibilityLabel="Home"
           onPress={() => {
             if (active !== 'library') router.replace('/');
           }}
           style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}>
           <Icon
-            name="library"
+            name="home"
             size={22}
             color={active === 'library' ? colors.primary : colors.inkSoft}
           />
           <Text style={[styles.tabLabel, active === 'library' && styles.tabLabelActive]}>
-            Biblioteka
+            Home
           </Text>
         </Pressable>
 
@@ -65,8 +65,21 @@ export function BottomNav({ active, onScan, scanBadge }: Props) {
           ) : null}
         </Pressable>
 
-        {/* Pusty slot — zachowuje symetrię paska bez drugiej zakładki. */}
-        <View style={styles.tab} pointerEvents="none" />
+        <Pressable
+          accessibilityRole="tab"
+          accessibilityState={{ selected: active === 'profile' }}
+          accessibilityLabel="Profil"
+          onPress={() => router.push('/profile')}
+          style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}>
+          <Icon
+            name="user"
+            size={22}
+            color={active === 'profile' ? colors.primary : colors.inkSoft}
+          />
+          <Text style={[styles.tabLabel, active === 'profile' && styles.tabLabelActive]}>
+            Profil
+          </Text>
+        </Pressable>
       </View>
     </View>
   );

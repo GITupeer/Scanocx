@@ -92,6 +92,12 @@
         {
           "faceIDPermission": "Scanocx może użyć Face ID do szybkiego logowania."
         }
+      ],
+      [
+        "expo-sqlite",
+        {
+          "enableFTS": true
+        }
       ]
     ],
     "experiments": {

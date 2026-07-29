@@ -4,12 +4,12 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
-  FlatList,
-  Image,
+  Dimensions,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -18,6 +18,7 @@ import { useAuth } from "@/src/auth/AuthProvider";
 import type { BookSummary } from "@/src/domain/types";
 import { useOcrQueue } from "@/src/ocr/queue";
 import { refreshOcrQuota, useOcrQuota } from "@/src/ocr/quota";
+import { searchInBooks, type SearchHit } from "@/src/search/query";
 import {
   clearBookCover,
   createBook,
@@ -28,8 +29,6 @@ import {
 } from "@/src/storage/books";
 import {
   AiQueueCard,
-  AuroraBackdrop,
-  Badge,
   BookCover,
   BottomNav,
   BusyOverlay,
@@ -38,25 +37,31 @@ import {
   Dialog,
   EmptyState,
   FadeInUp,
+  Gradient,
+  HomeHeroOrbs,
   Icon,
   IconButton,
   Loader,
-  ProgressBar,
   Row,
   ScanQueueCard,
-  SearchField,
-  SectionHeader,
   Sheet,
   SheetGroup,
   TextField,
   colors,
-  font,
+  gradients,
   radius,
   shadow,
   space,
   useBottomNavInset,
+  type IconName,
 } from "@/src/ui";
 import { pages as pagesLabel, relativeDate } from "@/src/utils/format";
+
+const SCREEN_W = Dimensions.get("window").width;
+const CARD_GAP = space.md;
+const CATEGORY_W = (SCREEN_W - space.xl * 2 - CARD_GAP) / 2;
+const DEST_W = Math.min(220, SCREEN_W * 0.58);
+const DEST_H = Math.round(DEST_W * 1.28);
 
 function userInitials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -68,6 +73,16 @@ function userInitials(name: string): string {
 function planLabel(plan: string | undefined): string {
   return plan === "pro" ? "Pro" : "Darmowy";
 }
+
+type QuickAction = {
+  id: string;
+  icon: IconName;
+  tint: string;
+  iconColor: string;
+  meta: string;
+  label: string;
+  onPress: () => void;
+};
 
 export default function LibraryScreen() {
   const router = useRouter();
@@ -81,10 +96,14 @@ export default function LibraryScreen() {
   const [books, setBooks] = useState<BookSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [sheetBook, setSheetBook] = useState<BookSummary | null>(null);
   const [renameTarget, setRenameTarget] = useState<BookSummary | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
@@ -111,11 +130,39 @@ export default function LibraryScreen() {
     }, [refresh, ready, isLoggedIn, refreshAuth]),
   );
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return books;
-    return books.filter((book) => book.title.toLowerCase().includes(needle));
-  }, [books, query]);
+  useEffect(() => {
+    const needle = query.trim();
+    if (!needle) {
+      setSearchHits([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    setSearchLoading(true);
+    const handle = setTimeout(() => {
+      void searchInBooks(needle)
+        .then((hits) => setSearchHits(hits))
+        .catch(() => setSearchHits([]))
+        .finally(() => setSearchLoading(false));
+    }, 180);
+
+    return () => clearTimeout(handle);
+  }, [query]);
+
+  const recentBooks = useMemo(
+    () =>
+      [...books].sort(
+        (a, b) =>
+          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      ),
+    [books],
+  );
+
+  const quotaPillLabel = useMemo(() => {
+    if (!isLoggedIn || !user) return "Zaloguj";
+    if (user.quota) return `${user.quota.remaining} AI`;
+    return planLabel(user.plan);
+  }, [isLoggedIn, user]);
 
   const onCreate = async () => {
     setCreating(true);
@@ -225,7 +272,6 @@ export default function LibraryScreen() {
     setScanOpen(true);
   }, [books.length]);
 
-  // Wejście z Menu („Skanuj”) otwiera wybór książki od razu po wczytaniu listy.
   const scanParamHandled = useRef(false);
   useEffect(() => {
     if (params.scan !== "1" || loading || scanParamHandled.current) return;
@@ -233,222 +279,394 @@ export default function LibraryScreen() {
     openScan();
   }, [loading, openScan, params.scan]);
 
+  const quickActions: QuickAction[] = useMemo(
+    () => [
+      {
+        id: "scan",
+        icon: "camera",
+        tint: "#FDE8E6",
+        iconColor: "#E24B41",
+        meta:
+          queue.remaining > 0
+            ? `${queue.remaining} w kolejce`
+            : "Szybki skan stron",
+        label: "Skanuj",
+        onPress: openScan,
+      },
+      {
+        id: "new",
+        icon: "book",
+        tint: "#DDF7F1",
+        iconColor: "#10B981",
+        meta: `${books.length} w bibliotece`,
+        label: "Nowa książka",
+        onPress: () => setCreateOpen(true),
+      },
+      {
+        id: "ai",
+        icon: "ai",
+        tint: "#EDE9FE",
+        iconColor: "#7C3AED",
+        meta:
+          isLoggedIn && user?.quota
+            ? `${user.quota.remaining} analiz`
+            : "Korekta tekstu",
+        label: "AI",
+        onPress: () => router.push((isLoggedIn ? "/usage" : "/login") as Href),
+      },
+      {
+        id: "ocr",
+        icon: "text",
+        tint: "#FFF2D9",
+        iconColor: "#F59E0B",
+        meta: ocrQuota.unlimited
+          ? "Bez limitu"
+          : `${ocrQuota.remaining ?? 0} OCR`,
+        label: "Odczyt tekstu",
+        onPress: () => router.push((isLoggedIn ? "/usage" : "/login") as Href),
+      },
+      {
+        id: "account",
+        icon: "user",
+        tint: "#FCE7F3",
+        iconColor: "#EC4899",
+        meta: isLoggedIn ? planLabel(user?.plan) : "Konto",
+        label: isLoggedIn ? "Profil" : "Zaloguj",
+        onPress: () => router.push(isLoggedIn ? "/profile" : "/login"),
+      },
+    ],
+    [
+      books.length,
+      isLoggedIn,
+      ocrQuota.remaining,
+      ocrQuota.unlimited,
+      openScan,
+      queue.remaining,
+      router,
+      user?.plan,
+      user?.quota,
+    ],
+  );
+
   if (loading && books.length === 0) {
     return <Loader label="Wczytywanie biblioteki…" />;
   }
 
+  const greetingName = isLoggedIn
+    ? user?.name?.trim() || "tam"
+    : "w Scanocx";
+  const searching = query.trim().length > 0;
+
   return (
     <View style={styles.root}>
-      <AuroraBackdrop height={430} />
-
-      <FlatList
-        data={filtered}
-        keyExtractor={(item) => item.id}
+      <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[
-          styles.list,
-          {
-            paddingTop: insets.top + space.md,
-            paddingBottom: bottomInset + space.xl,
-          },
-        ]}
-        ListHeaderComponent={
-          <FadeInUp>
-            <View style={styles.brandRow}>
-              <Image
-                source={require("../assets/images/logo.png")}
-                style={styles.brandMark}
-                resizeMode="contain"
-                accessibilityLabel="Scanocx"
-              />
-              <View style={styles.brandText}>
-                <Text style={styles.brand}>Scanocx AI</Text>
-                <Text style={styles.tagline}>Scan and Analyze Your Books</Text>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  isLoggedIn && user ? `Konto: ${user.name}` : "Zaloguj się"
-                }
-                onPress={() => router.push(isLoggedIn ? "/profile" : "/login")}
-                style={({ pressed }) => [
-                  styles.userChip,
-                  pressed && styles.userChipPressed,
-                ]}
-              >
-                {isLoggedIn && user ? (
-                  <>
-                    <View style={styles.userAvatar}>
-                      <Text style={styles.userAvatarText}>
+        contentContainerStyle={{ paddingBottom: bottomInset + space.xl }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <FadeInUp>
+          <Gradient
+            colors={gradients.homeHero}
+            angle={165}
+            fallbackColor={colors.blue}
+            style={[styles.hero, { paddingTop: insets.top + space.md }]}
+          >
+            <HomeHeroOrbs />
+
+            <FadeInUp delay={40} distance={10}>
+              <View style={styles.heroTop}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Menu"
+                  hitSlop={10}
+                  onPress={() => setMenuOpen(true)}
+                  style={({ pressed }) => [
+                    styles.heroIconBtn,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Icon name="menu" size={22} color={colors.white} />
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    isLoggedIn
+                      ? `Pakiet ${planLabel(user?.plan)}`
+                      : "Zaloguj się"
+                  }
+                  onPress={() =>
+                    router.push((isLoggedIn ? "/usage" : "/login") as Href)
+                  }
+                  style={({ pressed }) => [
+                    styles.quotaPill,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={styles.quotaAvatar}>
+                    {isLoggedIn && user ? (
+                      <Text style={styles.quotaAvatarText}>
                         {userInitials(user.name)}
                       </Text>
-                    </View>
-                    <View style={styles.userMeta}>
-                      <Text numberOfLines={1} style={styles.userName}>
-                        {user.name.split(/\s+/)[0]}
-                      </Text>
-                      <Text numberOfLines={1} style={styles.userPlan}>
-                        {planLabel(user.plan)}
-                      </Text>
-                    </View>
-                  </>
-                ) : (
-                  <>
-                    <View style={styles.userAvatarGuest}>
-                      <Icon name="user" size={16} color={colors.primary} />
-                    </View>
-                    <Text style={styles.userNameGuest}>Zaloguj</Text>
-                  </>
-                )}
-              </Pressable>
-            </View>
+                    ) : (
+                      <Icon name="user" size={14} color={colors.primary} />
+                    )}
+                  </View>
+                  <Text style={styles.quotaLabel} numberOfLines={1}>
+                    {quotaPillLabel}
+                  </Text>
+                  <Icon name="chevronDown" size={14} color={colors.inkSoft} />
+                </Pressable>
+              </View>
+            </FadeInUp>
 
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Użycie AI"
-              onPress={() =>
-                router.push((isLoggedIn ? "/usage" : "/login") as Href)
-              }
-              style={({ pressed }) => [
-                styles.planCard,
-                pressed && styles.planCardPressed,
-              ]}
-            >
-              {isLoggedIn && user ? (
-                <>
-                  <View style={styles.planTop}>
-                    <View style={styles.planIcon}>
-                      <Icon name="shield" size={16} color={colors.primary} />
-                    </View>
-                    <View style={styles.planText}>
-                      <Text style={styles.planTitle}>
-                        Pakiet {planLabel(user.plan)}
-                      </Text>
-                      <Text style={styles.planDetail} numberOfLines={2}>
-                        {ocrQuota.unlimited
-                          ? "OCR nielimitowane"
-                          : `OCR ${ocrQuota.remaining}/${ocrQuota.limit} / miesiąc`}
-                        {" · "}
-                        {user.quota
-                          ? `AI ${user.quota.remaining}/${user.quota.limit} / ${
-                              user.quota.period_type === "day"
-                                ? "dzień"
-                                : "miesiąc"
-                            }`
-                          : "AI —"}
-                      </Text>
-                    </View>
-                    <Badge
-                      label={planLabel(user.plan)}
-                      tone={user.plan === "pro" ? "success" : "primary"}
-                      icon={user.plan === "pro" ? "bolt" : "ai"}
-                    />
-                  </View>
-                  {!ocrQuota.unlimited &&
-                  ocrQuota.loggedIn &&
-                  ocrQuota.limit != null &&
-                  ocrQuota.limit > 0 ? (
-                    <ProgressBar
-                      value={Math.max(
-                        0,
-                        Math.min(
-                          1,
-                          (ocrQuota.used + ocrQuota.reserved) / ocrQuota.limit,
-                        ),
-                      )}
-                      height={5}
-                      style={styles.planBar}
-                    />
-                  ) : user.quota && user.quota.limit > 0 ? (
-                    <ProgressBar
-                      value={Math.max(
-                        0,
-                        Math.min(
-                          1,
-                          (user.quota.limit - user.quota.remaining) /
-                            user.quota.limit,
-                        ),
-                      )}
-                      height={5}
-                      style={styles.planBar}
-                    />
-                  ) : null}
-                </>
-              ) : (
-                <View style={styles.planTop}>
-                  <View style={styles.planIcon}>
-                    <Icon name="lock" size={16} color={colors.primary} />
-                  </View>
-                  <View style={styles.planText}>
-                    <Text style={styles.planTitle}>Zaloguj się</Text>
-                    <Text style={styles.planDetail} numberOfLines={2}>
-                      Bez konta: tylko zdjęcia. OCR (30/mies.) i AI po zalogowaniu
-                    </Text>
-                  </View>
-                  <Icon name="chevronRight" size={16} color={colors.faint} />
+            <FadeInUp delay={120} distance={16}>
+              <Text style={styles.welcomeLine}>Witaj</Text>
+              <Text style={styles.welcomeName}>{greetingName}</Text>
+            </FadeInUp>
+
+            <FadeInUp delay={220} distance={18}>
+              <View
+                style={[
+                  styles.searchBar,
+                  searchFocused && styles.searchBarFocused,
+                ]}
+              >
+                <Icon
+                  name="ai"
+                  size={18}
+                  color={searchFocused ? colors.primary : colors.faint}
+                />
+                <View style={styles.searchTextCol}>
+                  <Text style={styles.searchTitle}>
+                    Szukaj w Twoich Tekstach
+                  </Text>
+                  <TextInput
+                    value={query}
+                    onChangeText={setQuery}
+                    placeholder="Wyszukaj w odczytanych tekstach frazę…"
+                    placeholderTextColor={colors.faint}
+                    onFocus={() => setSearchFocused(true)}
+                    onBlur={() => setSearchFocused(false)}
+                    returnKeyType="search"
+                    style={styles.searchInput}
+                  />
                 </View>
-              )}
-            </Pressable>
+                {query.length > 0 ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Wyczyść"
+                    hitSlop={8}
+                    onPress={() => setQuery("")}
+                    style={styles.searchAction}
+                  >
+                    <Icon name="close" size={16} color={colors.muted} />
+                  </Pressable>
+                ) : (
+                  <View style={styles.searchAction}>
+                    <Icon name="search" size={16} color={colors.ink} />
+                  </View>
+                )}
+              </View>
+            </FadeInUp>
+          </Gradient>
 
+          <View style={styles.body}>
             <ScanQueueCard style={styles.queue} />
             <AiQueueCard style={styles.queue} />
 
-            {books.length > 2 ? (
-              <SearchField
-                value={query}
-                onChangeText={setQuery}
-                placeholder="Szukaj książki…"
-              />
+            {!searching ? (
+              <>
+                <View style={styles.sectionHead}>
+                  <Text style={styles.sectionTitle}>Szybkie akcje</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    hitSlop={8}
+                    onPress={() => setCreateOpen(true)}
+                    style={({ pressed }) => pressed && styles.pressed}
+                  >
+                    <Text style={styles.sectionLink}>Dodaj</Text>
+                  </Pressable>
+                </View>
+
+                <View style={styles.categoryGrid}>
+                  {quickActions.map((action) => (
+                    <Pressable
+                      key={action.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={action.label}
+                      onPress={action.onPress}
+                      style={({ pressed }) => [
+                        styles.categoryCard,
+                        { width: CATEGORY_W },
+                        pressed && styles.categoryCardPressed,
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.categoryIcon,
+                          { backgroundColor: action.tint },
+                        ]}
+                      >
+                        <Icon
+                          name={action.icon}
+                          size={18}
+                          color={action.iconColor}
+                        />
+                      </View>
+                      <View style={styles.categoryText}>
+                        <Text style={styles.categoryMeta} numberOfLines={1}>
+                          {action.meta}
+                        </Text>
+                        <Text style={styles.categoryLabel} numberOfLines={1}>
+                          {action.label}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              </>
             ) : null}
 
-            {filtered.length > 0 ? (
-              <SectionHeader
-                title={query ? `Wyniki (${filtered.length})` : "Twoje książki"}
-                action={
-                  query
-                    ? undefined
-                    : { label: "Dodaj", onPress: () => setCreateOpen(true) }
-                }
-                style={styles.section}
+            <View style={styles.sectionHead}>
+              <Text style={styles.sectionTitle}>
+                {searching
+                  ? searchLoading
+                    ? "Szukam…"
+                    : `W treści (${searchHits.length})`
+                  : "Twoje książki"}
+              </Text>
+              {!searching ? (
+                <Pressable
+                  accessibilityRole="button"
+                  hitSlop={8}
+                  onPress={() => setCreateOpen(true)}
+                  style={({ pressed }) => pressed && styles.pressed}
+                >
+                  <Text style={styles.sectionLink}>Nowa</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            {searching ? (
+              searchHits.length === 0 && !searchLoading ? (
+                <EmptyState
+                  icon="ai"
+                  title="Brak trafień w treści"
+                  body={`Nic nie pasuje do „${query.trim()}”. Spróbuj innej frazy — wyszukiwanie działa po OCR i tekście po korekcie AI.`}
+                />
+              ) : (
+                <View style={styles.listStack}>
+                  {searchHits.map((hit) => (
+                    <SearchHitCard
+                      key={`${hit.bookId}:${hit.pageId}`}
+                      hit={hit}
+                      onPress={() =>
+                        router.push(
+                          `/book/${hit.bookId}/page/${hit.pageId}` as Href,
+                        )
+                      }
+                    />
+                  ))}
+                </View>
+              )
+            ) : books.length === 0 ? (
+              <EmptyState
+                icon="book"
+                title="Zacznij od pierwszej książki"
+                body="Utwórz książkę, zrób zdjęcia stron, a Scanocx rozpozna tekst lokalnie na urządzeniu."
+                action={{
+                  label: "Nowa książka",
+                  icon: "plus",
+                  onPress: () => setCreateOpen(true),
+                }}
               />
-            ) : null}
-          </FadeInUp>
-        }
-        ListEmptyComponent={
-          query ? (
-            <EmptyState
-              icon="search"
-              title="Brak wyników"
-              body={`Żadna książka nie pasuje do „${query.trim()}”.`}
-            />
-          ) : (
-            <EmptyState
-              icon="book"
-              title="Zacznij od pierwszej książki"
-              body="Utwórz książkę, zrób zdjęcia stron, a Scanocx rozpozna tekst lokalnie na urządzeniu."
-              action={{
-                label: "Nowa książka",
-                icon: "plus",
-                onPress: () => setCreateOpen(true),
-              }}
-            />
-          )
-        }
-        renderItem={({ item }) => (
-          <BookCard
-            book={item}
-            onPress={() => router.push(`/book/${item.id}`)}
-            onMore={() => setSheetBook(item)}
-          />
-        )}
-        ItemSeparatorComponent={() => <View style={{ height: space.md }} />}
-      />
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.destRow}
+                decelerationRate="fast"
+                snapToInterval={DEST_W + space.md}
+                snapToAlignment="start"
+              >
+                {recentBooks.map((book) => (
+                  <DestinationCard
+                    key={book.id}
+                    book={book}
+                    onPress={() => router.push(`/book/${book.id}`)}
+                    onMore={() => setSheetBook(book)}
+                  />
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </FadeInUp>
+      </ScrollView>
 
       <BottomNav
         active="library"
         onScan={openScan}
         scanBadge={queue.remaining}
       />
+
+      <Sheet
+        visible={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        eyebrow="Scanocx"
+        title="Menu"
+      >
+        <SheetGroup>
+          <Row
+            icon="user"
+            label={isLoggedIn ? "Profil" : "Zaloguj się"}
+            detail={
+              isLoggedIn && user
+                ? `${user.name} · ${planLabel(user.plan)}`
+                : "Konto i pakiet"
+            }
+            chevron
+            onPress={() => {
+              setMenuOpen(false);
+              router.push(isLoggedIn ? "/profile" : "/login");
+            }}
+          />
+          <View style={styles.sheetDivider} />
+          <Row
+            icon="stats"
+            label="Użycie AI i OCR"
+            detail={
+              isLoggedIn && user?.quota
+                ? `${user.quota.remaining} analiz AI`
+                : undefined
+            }
+            chevron
+            onPress={() => {
+              setMenuOpen(false);
+              router.push((isLoggedIn ? "/usage" : "/login") as Href);
+            }}
+          />
+          <View style={styles.sheetDivider} />
+          <Row
+            icon="plus"
+            label="Nowa książka"
+            onPress={() => {
+              setMenuOpen(false);
+              setCreateOpen(true);
+            }}
+          />
+          <View style={styles.sheetDivider} />
+          <Row
+            icon="camera"
+            label="Skanuj strony"
+            tone="primary"
+            onPress={() => {
+              setMenuOpen(false);
+              openScan();
+            }}
+          />
+        </SheetGroup>
+      </Sheet>
 
       <Dialog
         visible={createOpen}
@@ -666,7 +884,7 @@ export default function LibraryScreen() {
   );
 }
 
-function BookCard({
+function DestinationCard({
   book,
   onPress,
   onMore,
@@ -682,33 +900,96 @@ function BookCard({
       onPress={onPress}
       onLongPress={onMore}
       style={({ pressed }) => [
-        styles.bookCard,
-        pressed && styles.bookCardPressed,
+        styles.destCard,
+        pressed && styles.destCardPressed,
       ]}
     >
-      <BookCover title={book.title} coverUri={book.coverUri} width={50} />
-
-      <View style={styles.bookText}>
-        <Text numberOfLines={2} style={styles.bookTitle}>
+      <BookCover
+        title={book.title}
+        coverUri={book.coverUri}
+        width={DEST_W}
+        height={DEST_H}
+        radius={22}
+      />
+      <View style={styles.destShade} pointerEvents="none" />
+      <View style={styles.destBadge}>
+        <Text style={styles.destBadgeText}>{pagesLabel(book.pageCount)}</Text>
+      </View>
+      <View style={styles.destFooter}>
+        <Text numberOfLines={2} style={styles.destTitle}>
           {book.title}
         </Text>
-        <View style={styles.bookMetaRow}>
-          <Icon name="notes" size={12} color={colors.faint} />
-          <Text style={styles.bookMeta}>{pagesLabel(book.pageCount)}</Text>
-          <View style={styles.dot} />
-          <Text style={styles.bookMeta}>{relativeDate(book.updatedAt)}</Text>
-        </View>
+        <Text style={styles.destMeta}>{relativeDate(book.updatedAt)}</Text>
       </View>
-
       <IconButton
         name="more"
         accessibilityLabel={`Opcje: ${book.title}`}
         variant="ghost"
-        size={36}
-        iconSize={18}
+        size={34}
+        iconSize={16}
         round
         onPress={onMore}
+        style={styles.destMore}
       />
+    </Pressable>
+  );
+}
+
+function pageHitLabel(hit: SearchHit): string {
+  if (hit.printedPageNumber?.trim()) {
+    return `s. ${hit.printedPageNumber.trim()}`;
+  }
+  return `str. ${hit.pageIndex}`;
+}
+
+function SearchHitCard({
+  hit,
+  onPress,
+}: {
+  hit: SearchHit;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${hit.bookTitle}, ${pageHitLabel(hit)}`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.hitCard,
+        pressed && styles.hitCardPressed,
+      ]}
+    >
+      <View style={styles.hitTop}>
+        <Text numberOfLines={1} style={styles.hitBook}>
+          {hit.bookTitle}
+        </Text>
+        <View style={styles.hitBadges}>
+          <View
+            style={[
+              styles.hitBadge,
+              hit.source === "ai" ? styles.hitBadgeAi : styles.hitBadgeOcr,
+            ]}
+          >
+            <Icon
+              name={hit.source === "ai" ? "ai" : "scan"}
+              size={11}
+              color={hit.source === "ai" ? colors.primary : colors.muted}
+            />
+            <Text
+              style={[
+                styles.hitBadgeText,
+                hit.source === "ai" && styles.hitBadgeTextAi,
+              ]}
+            >
+              {hit.source === "ai" ? "AI" : "OCR"}
+            </Text>
+          </View>
+          <Text style={styles.hitPage}>{pageHitLabel(hit)}</Text>
+        </View>
+      </View>
+      <Text numberOfLines={3} style={styles.hitSnippet}>
+        {hit.snippet || "Fragment strony"}
+      </Text>
     </Pressable>
   );
 }
@@ -718,194 +999,321 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.canvas,
   },
-  list: {
-    paddingHorizontal: space.lg,
-    gap: space.md,
-  },
   flex: {
     flex: 1,
   },
-  brandRow: {
+  pressed: {
+    opacity: 0.82,
+  },
+  hero: {
+    overflow: "hidden",
+    paddingHorizontal: space.xl,
+    paddingBottom: space.xxl,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+  },
+  heroTop: {
     flexDirection: "row",
     alignItems: "center",
-    gap: space.md,
-    paddingBottom: space.lg,
+    justifyContent: "space-between",
+    marginBottom: space.sm,
   },
-  brandMark: {
-    width: 52,
-    height: 54,
+  heroIconBtn: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  brandText: {
-    flex: 1,
-    gap: 1,
-    minWidth: 0,
-  },
-  brand: {
-    ...font.h1,
-    fontSize: 24,
-  },
-  tagline: {
-    fontSize: 12.5,
-    fontWeight: "600",
-    color: colors.muted,
-    letterSpacing: -0.1,
-  },
-  userChip: {
+  quotaPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    maxWidth: 140,
-    paddingVertical: 4,
-    paddingLeft: 4,
-    paddingRight: 10,
-    backgroundColor: colors.glass,
+    maxWidth: 160,
+    paddingVertical: 5,
+    paddingLeft: 5,
+    paddingRight: 12,
+    backgroundColor: colors.white,
     borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: colors.hairline,
     ...shadow.soft,
   },
-  userChipPressed: {
-    opacity: 0.88,
-    transform: [{ scale: 0.98 }],
-  },
-  userAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.primary,
-  },
-  userAvatarText: {
-    fontSize: 12,
-    fontWeight: "800",
-    color: colors.white,
-    letterSpacing: -0.2,
-  },
-  userAvatarGuest: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  quotaAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.primarySoft,
   },
-  userMeta: {
-    flexShrink: 1,
-    minWidth: 0,
-    gap: 1,
-  },
-  userName: {
-    flexShrink: 1,
-    fontSize: 13,
-    fontWeight: "700",
-    color: colors.ink,
-    letterSpacing: -0.2,
-  },
-  userPlan: {
+  quotaAvatarText: {
     fontSize: 11,
-    fontWeight: "700",
-    color: colors.muted,
-    letterSpacing: -0.1,
-  },
-  userNameGuest: {
-    fontSize: 13,
-    fontWeight: "700",
+    fontWeight: "800",
     color: colors.primary,
     letterSpacing: -0.2,
   },
-  planCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.line,
-    padding: space.md,
-    gap: space.sm,
-    marginBottom: space.md,
-    ...shadow.soft,
+  quotaLabel: {
+    flexShrink: 1,
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.ink,
+    letterSpacing: -0.2,
   },
-  planCardPressed: {
-    opacity: 0.9,
-    transform: [{ scale: 0.995 }],
+  welcomeLine: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.92)",
+    letterSpacing: -0.4,
+    lineHeight: 26,
+    marginBottom: 2,
   },
-  planTop: {
+  welcomeName: {
+    fontSize: 30,
+    fontWeight: "800",
+    color: colors.white,
+    letterSpacing: -0.8,
+    lineHeight: 34,
+    marginBottom: space.xl,
+  },
+  searchBar: {
     flexDirection: "row",
     alignItems: "center",
     gap: space.md,
+    minHeight: 64,
+    paddingLeft: space.lg,
+    paddingRight: space.sm,
+    paddingVertical: space.sm,
+    backgroundColor: colors.white,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    borderColor: "transparent",
+    ...shadow.soft,
   },
-  planIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.primarySoft,
+  searchBarFocused: {
+    borderColor: colors.primary,
   },
-  planText: {
+  searchTextCol: {
     flex: 1,
     minWidth: 0,
-    gap: 2,
+    gap: 1,
   },
-  planTitle: {
-    fontSize: 14.5,
-    fontWeight: "800",
+  searchTitle: {
+    fontSize: 15,
+    fontWeight: "700",
     color: colors.ink,
-    letterSpacing: -0.3,
+    letterSpacing: -0.2,
   },
-  planDetail: {
-    fontSize: 12.5,
-    fontWeight: "600",
-    color: colors.muted,
-    letterSpacing: -0.1,
+  searchInput: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: colors.inkSoft,
+    paddingVertical: 0,
+    margin: 0,
   },
-  planBar: {
-    marginTop: 2,
+  searchAction: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surfaceMuted,
+  },
+  body: {
+    paddingTop: space.xxl,
+    paddingHorizontal: space.xl,
+    gap: space.sm,
   },
   queue: {
     marginBottom: space.sm,
   },
-  section: {
-    marginTop: space.sm,
-  },
-  bookCard: {
+  sectionHead: {
     flexDirection: "row",
     alignItems: "center",
-    gap: space.lg,
-    padding: space.md,
-    paddingRight: space.sm,
+    justifyContent: "space-between",
+    marginTop: space.md,
+    marginBottom: space.md,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: colors.ink,
+    letterSpacing: -0.4,
+  },
+  sectionLink: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#3B82F6",
+    letterSpacing: -0.2,
+  },
+  categoryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: CARD_GAP,
+    marginBottom: space.lg,
+  },
+  categoryCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: space.md,
+    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+    backgroundColor: colors.surface,
+    borderRadius: 18,
+    ...shadow.soft,
+  },
+  categoryCardPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.985 }],
+  },
+  categoryIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  categoryText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  categoryMeta: {
+    fontSize: 11.5,
+    fontWeight: "600",
+    color: colors.muted,
+    letterSpacing: -0.1,
+  },
+  categoryLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.ink,
+    letterSpacing: -0.2,
+  },
+  destRow: {
+    paddingRight: space.xl,
+    gap: space.md,
+  },
+  destCard: {
+    width: DEST_W,
+    height: DEST_H,
+    borderRadius: 22,
+    overflow: "hidden",
+    backgroundColor: colors.surfaceMuted,
+    ...shadow.card,
+  },
+  destCardPressed: {
+    transform: [{ scale: 0.98 }],
+    opacity: 0.95,
+  },
+  destShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "transparent",
+    experimental_backgroundImage:
+      "linear-gradient(180deg, rgba(7,8,14,0) 45%, rgba(7,8,14,0.72) 100%)",
+  },
+  destBadge: {
+    position: "absolute",
+    top: space.md,
+    left: space.md,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: "rgba(20, 24, 40, 0.45)",
+  },
+  destBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.white,
+    letterSpacing: -0.1,
+  },
+  destFooter: {
+    position: "absolute",
+    left: space.md,
+    right: space.md,
+    bottom: space.md,
+    gap: 3,
+  },
+  destTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: colors.white,
+    letterSpacing: -0.3,
+  },
+  destMeta: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.78)",
+  },
+  destMore: {
+    position: "absolute",
+    top: space.sm,
+    right: space.sm,
+    backgroundColor: "rgba(255,255,255,0.22)",
+  },
+  listStack: {
+    gap: space.md,
+  },
+  hitCard: {
+    gap: 8,
+    padding: space.lg,
     backgroundColor: colors.surface,
     borderRadius: radius.xl,
     borderWidth: 1,
     borderColor: colors.line,
     ...shadow.soft,
   },
-  bookCardPressed: {
+  hitCardPressed: {
     backgroundColor: colors.surfaceMuted,
     transform: [{ scale: 0.99 }],
   },
-  bookText: {
-    flex: 1,
-    gap: 5,
-  },
-  bookTitle: {
-    ...font.h3,
-    fontSize: 16.5,
-  },
-  bookMetaRow: {
+  hitTop: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: space.md,
   },
-  bookMeta: {
-    fontSize: 12.5,
-    fontWeight: "600",
+  hitBook: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "800",
+    color: colors.ink,
+    letterSpacing: -0.25,
+  },
+  hitBadges: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  hitBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+  },
+  hitBadgeAi: {
+    backgroundColor: colors.primarySoft,
+  },
+  hitBadgeOcr: {
+    backgroundColor: colors.surfaceSunken,
+  },
+  hitBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: colors.muted,
+    letterSpacing: -0.1,
+  },
+  hitBadgeTextAi: {
+    color: colors.primary,
+  },
+  hitPage: {
+    fontSize: 12,
+    fontWeight: "700",
     color: colors.muted,
   },
-  dot: {
-    width: 3,
-    height: 3,
-    borderRadius: 1.5,
-    backgroundColor: colors.faint,
+  hitSnippet: {
+    fontSize: 13.5,
+    lineHeight: 20,
+    fontWeight: "500",
+    color: colors.inkSoft,
   },
   sheetDivider: {
     height: StyleSheet.hairlineWidth,

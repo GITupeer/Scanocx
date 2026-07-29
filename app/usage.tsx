@@ -210,6 +210,15 @@ export default function UsageScreen() {
           ) : (
             <Text style={styles.quotaHint}>Brak danych limitu.</Text>
           )}
+          {user?.plan !== 'pro' ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Kup subskrypcję Pro"
+              onPress={() => router.push('/subscribe')}
+              style={({ pressed }) => [styles.upgradeLink, pressed && styles.upgradeLinkPressed]}>
+              <Text style={styles.upgradeLinkText}>Kup subskrypcję Pro</Text>
+            </Pressable>
+          ) : null}
         </Card>
 
         <Text style={styles.sectionTitle}>Historia analiz</Text>
@@ -297,6 +306,20 @@ const styles = StyleSheet.create({
   },
   quotaBar: {
     marginTop: 4,
+  },
+  upgradeLink: {
+    alignSelf: 'flex-start',
+    marginTop: space.xs,
+    paddingVertical: 4,
+  },
+  upgradeLinkPressed: {
+    opacity: 0.7,
+  },
+  upgradeLinkText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: colors.primary,
+    letterSpacing: -0.2,
   },
   sectionTitle: {
     ...font.h3,
