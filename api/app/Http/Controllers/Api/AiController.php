@@ -13,8 +13,6 @@ use App\Services\AiQuotaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use RuntimeException;
 
 class AiController extends Controller
@@ -89,10 +87,8 @@ class AiController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        $storedPaths = [];
-
         try {
-            [$batch, $jobIds] = DB::transaction(function () use ($user, $data, $quota, $pageCount, &$storedPaths) {
+            [$batch, $jobIds] = DB::transaction(function () use ($user, $data, $quota, $pageCount) {
                 $quota->reserve($user, $pageCount);
 
                 $book = Book::updateOrCreate(
@@ -117,21 +113,8 @@ class AiController extends Controller
                 $jobIds = [];
 
                 foreach ($data['pages'] as $pageData) {
-                    $binary = $this->decodeImageBase64((string) $pageData['image_base64']);
-                    $ext = $this->extensionForMime((string) ($pageData['mime_type'] ?? 'image/jpeg'));
-
-                    $existing = Page::query()
-                        ->where('book_id', $book->id)
-                        ->where('local_id', $pageData['local_id'])
-                        ->first();
-
-                    if ($existing?->image_path) {
-                        Storage::disk('local')->delete($existing->image_path);
-                    }
-
-                    $storedPath = "ai-pages/{$user->id}/{$book->id}/".Str::uuid()->toString().".{$ext}";
-                    Storage::disk('local')->put($storedPath, $binary);
-                    $storedPaths[] = $storedPath;
+                    $imageBase64 = $this->normalizeImageBase64((string) $pageData['image_base64']);
+                    $mime = (string) ($pageData['mime_type'] ?? 'image/jpeg');
 
                     $page = Page::updateOrCreate(
                         [
@@ -141,7 +124,9 @@ class AiController extends Controller
                         [
                             'index' => $pageData['index'],
                             'ocr_text' => (string) ($pageData['ocr_text'] ?? ''),
-                            'image_path' => $storedPath,
+                            'image_path' => null,
+                            'image_data' => $imageBase64,
+                            'image_mime' => $mime,
                             'printed_page_number' => $pageData['printed_page_number'] ?? null,
                             'ai_status' => 'pending',
                             'ai_text' => null,
@@ -162,17 +147,7 @@ class AiController extends Controller
                 return [$batch, $jobIds];
             });
         } catch (RuntimeException $e) {
-            foreach ($storedPaths as $path) {
-                Storage::disk('local')->delete($path);
-            }
-
             return response()->json(['message' => $e->getMessage()], 422);
-        } catch (\Throwable $e) {
-            foreach ($storedPaths as $path) {
-                Storage::disk('local')->delete($path);
-            }
-
-            throw $e;
         }
 
         foreach ($jobIds as $jobId) {
@@ -197,7 +172,7 @@ class AiController extends Controller
         return response()->json($this->serializeBatch($batch));
     }
 
-    private function decodeImageBase64(string $raw): string
+    private function normalizeImageBase64(string $raw): string
     {
         $cleaned = trim($raw);
         if (str_starts_with($cleaned, 'data:')) {
@@ -220,16 +195,8 @@ class AiController extends Controller
             throw new RuntimeException('Niepoprawne zdjęcie strony (base64).');
         }
 
-        return $binary;
-    }
-
-    private function extensionForMime(string $mime): string
-    {
-        return match ($mime) {
-            'image/png' => 'png',
-            'image/webp' => 'webp',
-            default => 'jpg',
-        };
+        // Przechowujemy znormalizowane base64 (bez data-URI).
+        return base64_encode($binary);
     }
 
     /**

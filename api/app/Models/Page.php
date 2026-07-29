@@ -15,10 +15,16 @@ class Page extends Model
         'index',
         'ocr_text',
         'image_path',
+        'image_data',
+        'image_mime',
         'printed_page_number',
         'ai_text',
         'ai_status',
         'ai_meta',
+    ];
+
+    protected $hidden = [
+        'image_data',
     ];
 
     protected function casts(): array
@@ -38,12 +44,24 @@ class Page extends Model
         return $this->hasMany(AiJob::class);
     }
 
-    /** Usuwa tymczasowe zdjęcie strony z dysku i czyści ścieżkę w bazie. */
+    /** Usuwa tymczasowe zdjęcie strony (baza + ewentualny plik dyskowy). */
     public function clearStoredImage(): void
     {
+        $dirty = false;
+
         if ($this->image_path) {
             Storage::disk('local')->delete($this->image_path);
             $this->image_path = null;
+            $dirty = true;
+        }
+
+        if ($this->image_data !== null || $this->image_mime !== null) {
+            $this->image_data = null;
+            $this->image_mime = null;
+            $dirty = true;
+        }
+
+        if ($dirty) {
             $this->save();
         }
     }

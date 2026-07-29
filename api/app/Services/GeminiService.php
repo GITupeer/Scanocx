@@ -51,20 +51,15 @@ PROMPT;
      *   page_number: string|null
      * }
      */
-    public function proofreadImage(string $absolutePath, string $mimeType = 'image/jpeg'): array
+    public function proofreadImageBytes(string $bytes, string $mimeType = 'image/jpeg'): array
     {
         $apiKey = trim((string) config('services.gemini.key'));
         if ($apiKey === '') {
             throw new RuntimeException('Brak klucza GEMINI_API_KEY na serwerze.');
         }
 
-        if (! is_readable($absolutePath)) {
+        if ($bytes === '') {
             throw new RuntimeException('Brak zdjęcia strony do analizy AI.');
-        }
-
-        $bytes = file_get_contents($absolutePath);
-        if ($bytes === false || $bytes === '') {
-            throw new RuntimeException('Nie udało się odczytać zdjęcia strony.');
         }
 
         $endpoint = sprintf('https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent', self::MODEL);
@@ -179,6 +174,30 @@ PROMPT;
         }
 
         return $this->parseResult($raw);
+    }
+
+    /**
+     * @return array{
+     *   text: string,
+     *   title: string|null,
+     *   subtitle: string|null,
+     *   ocr_quality: float,
+     *   coherence: float,
+     *   page_number: string|null
+     * }
+     */
+    public function proofreadImage(string $absolutePath, string $mimeType = 'image/jpeg'): array
+    {
+        if (! is_readable($absolutePath)) {
+            throw new RuntimeException('Brak zdjęcia strony do analizy AI.');
+        }
+
+        $bytes = file_get_contents($absolutePath);
+        if ($bytes === false || $bytes === '') {
+            throw new RuntimeException('Nie udało się odczytać zdjęcia strony.');
+        }
+
+        return $this->proofreadImageBytes($bytes, $mimeType);
     }
 
     /**
