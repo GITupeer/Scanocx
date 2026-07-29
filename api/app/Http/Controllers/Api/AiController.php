@@ -122,6 +122,7 @@ class AiController extends Controller
                             'printed_page_number' => $pageData['printed_page_number'] ?? null,
                             'ai_status' => 'pending',
                             'ai_text' => null,
+                            'ai_meta' => null,
                         ]
                     );
 
@@ -195,6 +196,10 @@ class AiController extends Controller
                         : null,
                     'error' => $job->error,
                     'ai_text' => $job->status === 'done' ? $job->page?->ai_text : null,
+                    'ai_meta' => $job->status === 'done' ? $job->page?->ai_meta : null,
+                    'printed_page_number' => $job->status === 'done'
+                        ? $job->page?->printed_page_number
+                        : null,
                 ];
             })->all(),
         ];

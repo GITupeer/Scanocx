@@ -1,6 +1,14 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
-import type { AiStatus, Book, BookPage, BookSummary, OcrQuality, OcrStatus } from '@/src/domain/types';
+import type {
+  AiAnalysis,
+  AiStatus,
+  Book,
+  BookPage,
+  BookSummary,
+  OcrQuality,
+  OcrStatus,
+} from '@/src/domain/types';
 import { ensurePortraitUri, rotateUri } from '@/src/images/ensurePortrait';
 import {
   scheduleBookSearchIndex,
@@ -29,6 +37,7 @@ function normalizePage(page: BookPage): BookPage {
     aiText: page.aiText ?? '',
     printedPageNumber: page.printedPageNumber ?? null,
     ocrQuality,
+    aiAnalysis: normalizeAiAnalysis(page.aiAnalysis),
     ocrStatus:
       ocrStatus === 'idle' ||
       ocrStatus === 'pending' ||
@@ -41,6 +50,28 @@ function normalizePage(page: BookPage): BookPage {
   };
 }
 
+function normalizeAiAnalysis(raw: BookPage['aiAnalysis'] | undefined): AiAnalysis | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const ocrQ = typeof raw.ocrQuality === 'number' ? clampScore(raw.ocrQuality) : 0;
+  const coherence = typeof raw.coherence === 'number' ? clampScore(raw.coherence) : 0;
+  return {
+    title: typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim() : null,
+    subtitle:
+      typeof raw.subtitle === 'string' && raw.subtitle.trim() ? raw.subtitle.trim() : null,
+    ocrQuality: ocrQ,
+    coherence,
+    pageNumber:
+      typeof raw.pageNumber === 'string' && raw.pageNumber.trim()
+        ? raw.pageNumber.trim()
+        : null,
+  };
+}
+
+function clampScore(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(Math.min(1, Math.max(0, n)) * 100) / 100;
+}
+
 function normalizeBook(book: Book): Book {
   return {
     ...book,
@@ -49,8 +80,8 @@ function normalizeBook(book: Book): Book {
   };
 }
 
-function freshAiFields(): Pick<BookPage, 'aiText' | 'aiStatus' | 'aiError'> {
-  return { aiText: '', aiStatus: 'idle', aiError: null };
+function freshAiFields(): Pick<BookPage, 'aiText' | 'aiStatus' | 'aiError' | 'aiAnalysis'> {
+  return { aiText: '', aiStatus: 'idle', aiError: null, aiAnalysis: null };
 }
 
 async function ensureDir(path: string): Promise<void> {
@@ -272,6 +303,8 @@ export async function updatePageAi(
     aiText?: string;
     aiStatus?: AiStatus;
     aiError?: string | null;
+    aiAnalysis?: AiAnalysis | null;
+    printedPageNumber?: string | null;
   }
 ): Promise<Book> {
   return updatePagesAi(bookId, [{ pageId, ...patch }]);
@@ -285,6 +318,8 @@ export async function updatePagesAi(
     aiText?: string;
     aiStatus?: AiStatus;
     aiError?: string | null;
+    aiAnalysis?: AiAnalysis | null;
+    printedPageNumber?: string | null;
   }>
 ): Promise<Book> {
   if (patches.length === 0) {
@@ -301,6 +336,14 @@ export async function updatePagesAi(
       aiText: patch.aiText ?? page.aiText,
       aiStatus: patch.aiStatus ?? page.aiStatus,
       aiError: patch.aiError !== undefined ? patch.aiError : (page.aiError ?? null),
+      aiAnalysis:
+        patch.aiAnalysis !== undefined
+          ? normalizeAiAnalysis(patch.aiAnalysis)
+          : (page.aiAnalysis ?? null),
+      printedPageNumber:
+        patch.printedPageNumber !== undefined
+          ? patch.printedPageNumber
+          : (page.printedPageNumber ?? null),
     };
   });
   return writeBook(book);

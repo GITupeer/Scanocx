@@ -17,6 +17,20 @@ export type OcrQuality = {
   confidence: OcrConfidenceQuality;
 };
 
+/** Metadane z korekty Gemini (tytuł, jakość, numer strony). */
+export type AiAnalysis = {
+  /** Wykryty tytuł / nagłówek; null gdy brak. */
+  title: string | null;
+  /** Wykryty podtytuł; null gdy brak. */
+  subtitle: string | null;
+  /** Ocena jakości OCR przed korektą, 0.00–1.00. */
+  ocrQuality: number;
+  /** Spójność tekstu po korekcie AI, 0.00–1.00. */
+  coherence: number;
+  /** Numer strony wykryty przez AI (usunięty z tekstu); null gdy brak. */
+  pageNumber: string | null;
+};
+
 export type BookPage = {
   id: string;
   index: number;
@@ -29,6 +43,8 @@ export type BookPage = {
   printedPageNumber: string | null;
   /** Jakość układu i pewności z ostatniego OCR; null gdy brak odczytu. */
   ocrQuality: OcrQuality | null;
+  /** Analiza z ostatniej udanej korekty AI; null gdy brak. */
+  aiAnalysis: AiAnalysis | null;
   ocrStatus: OcrStatus;
   aiStatus: AiStatus;
   /** Ostatni komunikat błędu Gemini; null gdy brak / sukces. */

@@ -21,7 +21,7 @@ export async function rewritePageWithAi(
   });
 
   await withBookMetaLock(() =>
-    updatePageAi(bookId, pageId, { aiStatus: 'pending', aiError: null })
+    updatePageAi(bookId, pageId, { aiStatus: 'pending', aiError: null, aiAnalysis: null })
   );
 
   try {

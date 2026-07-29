@@ -207,11 +207,27 @@ async function applyJobResults(
 
     if (job.status === 'done' && job.ai_text) {
       appliedDone.add(job.id);
+      const meta = job.ai_meta;
+      const analysis =
+        meta != null
+          ? {
+              title: meta.title,
+              subtitle: meta.subtitle,
+              ocrQuality: meta.ocr_quality,
+              coherence: meta.coherence,
+              pageNumber: meta.page_number,
+            }
+          : null;
       await withBookMetaLock(() =>
         updatePageAi(bookId, job.page_local_id, {
           aiText: job.ai_text ?? '',
           aiStatus: 'done',
           aiError: null,
+          aiAnalysis: analysis,
+          printedPageNumber:
+            job.printed_page_number !== undefined && job.printed_page_number !== null
+              ? job.printed_page_number
+              : undefined,
         })
       );
     } else if (job.status === 'failed') {
@@ -578,7 +594,7 @@ async function startCloudAnalysis(
 
   for (const page of pages) {
     await withBookMetaLock(() =>
-      updatePageAi(bookId, page.id, { aiStatus: 'pending', aiError: null })
+      updatePageAi(bookId, page.id, { aiStatus: 'pending', aiError: null, aiAnalysis: null })
     );
   }
 

@@ -43,11 +43,21 @@ class ProcessPageAiJob implements ShouldQueue
         $page->save();
 
         try {
-            $aiText = $gemini->proofread($page->ocr_text);
+            $result = $gemini->proofread($page->ocr_text);
 
-            DB::transaction(function () use ($aiJob, $page, $aiText, $quota) {
-                $page->ai_text = $aiText;
+            DB::transaction(function () use ($aiJob, $page, $result, $quota) {
+                $page->ai_text = $result['text'];
                 $page->ai_status = 'done';
+                $page->ai_meta = [
+                    'title' => $result['title'],
+                    'subtitle' => $result['subtitle'],
+                    'ocr_quality' => $result['ocr_quality'],
+                    'coherence' => $result['coherence'],
+                    'page_number' => $result['page_number'],
+                ];
+                if ($result['page_number'] !== null && $result['page_number'] !== '') {
+                    $page->printed_page_number = $result['page_number'];
+                }
                 $page->save();
 
                 $aiJob->status = 'done';
@@ -95,6 +105,7 @@ class ProcessPageAiJob implements ShouldQueue
 
             $page = $aiJob->page;
             $page->ai_status = 'error';
+            $page->ai_meta = null;
             $page->save();
 
             $aiJob->status = 'failed';

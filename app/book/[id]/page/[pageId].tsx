@@ -12,7 +12,7 @@ import {
   useAiQueue,
 } from '@/src/ai/queue';
 import { useAuth } from '@/src/auth/AuthProvider';
-import type { Book, BookPage } from '@/src/domain/types';
+import type { AiAnalysis, Book, BookPage } from '@/src/domain/types';
 import { isLandscapeUri } from '@/src/images/ensurePortrait';
 import { cancelOcrForPage, runPageOcrExclusive, useOcrQueue } from '@/src/ocr/queue';
 import { OcrAuthRequiredError, OcrQuotaExceededError } from '@/src/ocr/quota';
@@ -30,6 +30,7 @@ import {
   AppBar,
   Button,
   ConfirmDialog,
+  Dialog,
   Icon,
   IconButton,
   Loader,
@@ -65,6 +66,7 @@ export default function PageDetailScreen() {
   const [rotating, setRotating] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const ocrQueue = useOcrQueue();
   const aiQueue = useAiQueue();
 
@@ -464,6 +466,17 @@ export default function PageDetailScreen() {
           />
           <View style={styles.sheetDivider} />
           <Row
+            icon="frame"
+            label="Dopasuj rogi"
+            detail="Ręcznie ustaw kadr i odczytaj tekst ponownie"
+            disabled={busy}
+            onPress={() => {
+              setMenuOpen(false);
+              router.push(`/book/${id}/crop?pageId=${page.id}`);
+            }}
+          />
+          <View style={styles.sheetDivider} />
+          <Row
             icon="ai"
             label="Korekta AI"
             detail="Popraw literówki i błędy odczytu bez skracania tekstu"
@@ -486,6 +499,23 @@ export default function PageDetailScreen() {
             onPress={() => {
               setMenuOpen(false);
               void onRetryOcr();
+            }}
+          />
+          <View style={styles.sheetDivider} />
+          <Row
+            icon="stats"
+            label="Analiza AI"
+            detail={
+              page.aiAnalysis
+                ? 'Tytuł, jakość OCR i numer strony'
+                : page.aiStatus === 'done'
+                  ? 'Brak metadanych — uruchom korektę ponownie'
+                  : 'Dostępna po udanej korekcie AI'
+            }
+            disabled={!page.aiAnalysis}
+            onPress={() => {
+              setMenuOpen(false);
+              setAnalysisOpen(true);
             }}
           />
           <View style={styles.sheetDivider} />
@@ -514,6 +544,12 @@ export default function PageDetailScreen() {
         </SheetGroup>
       </Sheet>
 
+      <AiAnalysisDialog
+        visible={analysisOpen}
+        analysis={page.aiAnalysis}
+        onClose={() => setAnalysisOpen(false)}
+      />
+
       <ConfirmDialog
         visible={deleteOpen}
         title="Usunąć stronę?"
@@ -522,6 +558,73 @@ export default function PageDetailScreen() {
         onConfirm={onConfirmDelete}
         onCancel={() => setDeleteOpen(false)}
       />
+    </View>
+  );
+}
+
+function formatScore(value: number): string {
+  return value.toFixed(2);
+}
+
+function AiAnalysisDialog({
+  visible,
+  analysis,
+  onClose,
+}: {
+  visible: boolean;
+  analysis: AiAnalysis | null;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog
+      visible={visible}
+      onClose={onClose}
+      icon="stats"
+      title="Analiza AI"
+      body="Wynik ostatniej korekty Gemini dla tej strony."
+      actions={<Button label="Zamknij" variant="outline" onPress={onClose} style={{ flex: 1 }} />}>
+      {analysis ? (
+        <View style={styles.analysisList}>
+          <AnalysisRow
+            label="Tytuł"
+            value={analysis.title ?? 'Nie wykryto'}
+            muted={!analysis.title}
+          />
+          <AnalysisRow
+            label="Podtytuł"
+            value={analysis.subtitle ?? 'Nie wykryto'}
+            muted={!analysis.subtitle}
+          />
+          <AnalysisRow label="Jakość OCR" value={formatScore(analysis.ocrQuality)} />
+          <AnalysisRow label="Spójność po korekcie" value={formatScore(analysis.coherence)} />
+          <AnalysisRow
+            label="Numer strony"
+            value={
+              analysis.pageNumber
+                ? `${analysis.pageNumber} (usunięty z tekstu)`
+                : 'Nie wykryto'
+            }
+            muted={!analysis.pageNumber}
+          />
+        </View>
+      ) : null}
+    </Dialog>
+  );
+}
+
+function AnalysisRow({
+  label,
+  value,
+  muted,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+}) {
+  return (
+    <View style={styles.analysisRow}>
+      <Text style={styles.analysisLabel}>{label}</Text>
+      <Text style={[styles.analysisValue, muted && styles.analysisMuted]}>{value}</Text>
     </View>
   );
 }
@@ -695,5 +798,29 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: colors.line,
     marginLeft: space.lg + 36 + space.md,
+  },
+  analysisList: {
+    gap: space.md,
+    paddingVertical: space.xs,
+  },
+  analysisRow: {
+    gap: 4,
+  },
+  analysisLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  analysisValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.ink,
+    lineHeight: 21,
+  },
+  analysisMuted: {
+    color: colors.faint,
+    fontWeight: '500',
   },
 });

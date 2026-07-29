@@ -41,6 +41,7 @@ export default function RootLayout() {
           <Stack.Screen name="admin/users" />
           <Stack.Screen name="book/[id]/index" />
           <Stack.Screen name="book/[id]/capture" options={{ animation: 'fade_from_bottom' }} />
+          <Stack.Screen name="book/[id]/crop" options={{ animation: 'fade_from_bottom' }} />
           <Stack.Screen name="book/[id]/page/[pageId]" />
           <Stack.Screen name="book/[id]/text" />
           <Stack.Screen name="book/[id]/export" />

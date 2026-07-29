@@ -36,6 +36,14 @@ export type AuthResponse = {
   user: ApiUser;
 };
 
+export type AiBatchJobMeta = {
+  title: string | null;
+  subtitle: string | null;
+  ocr_quality: number;
+  coherence: number;
+  page_number: string | null;
+};
+
 export type AiBatchJob = {
   id: number;
   page_local_id: string;
@@ -44,6 +52,8 @@ export type AiBatchJob = {
   queue_position: number | null;
   error: string | null;
   ai_text: string | null;
+  ai_meta: AiBatchJobMeta | null;
+  printed_page_number: string | null;
 };
 
 export type AiBatch = {

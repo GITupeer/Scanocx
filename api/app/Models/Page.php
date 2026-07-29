@@ -16,7 +16,15 @@ class Page extends Model
         'printed_page_number',
         'ai_text',
         'ai_status',
+        'ai_meta',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'ai_meta' => 'array',
+        ];
+    }
 
     public function book(): BelongsTo
     {

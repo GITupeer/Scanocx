@@ -15,7 +15,7 @@ class GeminiService
     public const SYSTEM_PROMPT = <<<'PROMPT'
 Jesteś profesjonalnym korektorem tekstu polskiego. Poniższy tekst pochodzi ze skanu OCR (zdjęcie strony książki) i zawiera błędy typowe dla OCR: literówki, brak polskich znaków (ąęćłńóśźż), rozbite lub sklejone słowa, błędną interpunkcję, przypadkowe znaki, złą kapitalizację, a także wyrazy przeniesione do nowej linii z dywizem (łamanie wyrazów w książce).
 
-TWOJE ZADANIE:
+TWOJE ZADANIE — KOREKTA:
 1. Popraw wyłącznie błędy OCR, literówki, interpunkcję, ortografię i oczywistą gramatykę.
 2. BEZWZGLĘDNIE NIE SKRACAJ, NIE STRESZCZAJ ANI NIE POMIJAJ ŻADNEGO ZDANIA, AKAPITU ANI FRAGMENTU.
 3. Nie dodawaj treści, której nie ma w oryginale. Nie „ulepszaj” stylu literackiego.
@@ -27,10 +27,30 @@ TWOJE ZADANIE:
    - Nie zostawiaj dywizu przeniesienia w środku słowa. Prawdziwe łączniki (np. „biało-czerwony”) zostaw bez zmian, gdy to nie jest łamanie wiersza.
 6. Zachowaj sensowny podział akapitów; scalaj tylko słowa rozbite przez OCR / łamanie wiersza.
 7. Jeśli fragment jest nieczytelny, zostaw najbliższą sensowną rekonstrukcję — nie wymyślaj zdań od zera.
-8. Zwróć WYŁĄCZNIE poprawiony tekst strony, bez komentarzy, wstępów, tytułów, cudzysłowów ani znaczników markdown.
+
+TWOJE ZADANIE — ANALIZA (do pól JSON):
+8. Wykryj tytuł strony / rozdziału (title) oraz podtytuł (subtitle), jeśli występują jako nagłówki — nie myl z pierwszym zdaniem akapitu.
+9. Oceń jakość OCR przed korektą (ocr_quality) oraz spójność / czytelność tekstu po Twojej korekcie (coherence) w skali 0.00–1.00 (dwa miejsca po przecinku).
+10. Wykryj numer strony wydrukowany na marginesie (page_number). Jeśli go wykryjesz:
+    - wpisz go w pole page_number,
+    - USUŃ go z corrected_text (nie zostawiaj samotnego numeru na początku/końcu).
+    Jeśli nie wykryjesz — page_number = null.
+
+FORMAT ODPOWIEDZI:
+Zwróć WYŁĄCZNIE jeden obiekt JSON zgodny ze schematem — bez markdown, komentarzy ani tekstu poza JSON.
 PROMPT;
 
-    public function proofread(string $ocrText): string
+    /**
+     * @return array{
+     *   text: string,
+     *   title: string|null,
+     *   subtitle: string|null,
+     *   ocr_quality: float,
+     *   coherence: float,
+     *   page_number: string|null
+     * }
+     */
+    public function proofread(string $ocrText): array
     {
         $apiKey = trim((string) config('services.gemini.key'));
         if ($apiKey === '') {
@@ -53,18 +73,75 @@ PROMPT;
                 'contents' => [
                     [
                         'role' => 'user',
-                        'parts' => [['text' => "Tekst OCR do korekty:\n\n{$trimmed}"]],
+                        'parts' => [['text' => "Tekst OCR do korekty i analizy:\n\n{$trimmed}"]],
                     ],
                 ],
                 'generationConfig' => [
                     'temperature' => 0.2,
                     'maxOutputTokens' => 65536,
+                    'responseMimeType' => 'application/json',
+                    'responseSchema' => [
+                        'type' => 'OBJECT',
+                        'properties' => [
+                            'corrected_text' => [
+                                'type' => 'STRING',
+                                'description' => 'Pełny poprawiony tekst strony bez numeru strony.',
+                            ],
+                            'has_title' => [
+                                'type' => 'BOOLEAN',
+                                'description' => 'Czy wykryto tytuł / nagłówek strony lub rozdziału.',
+                            ],
+                            'title' => [
+                                'type' => 'STRING',
+                                'nullable' => true,
+                                'description' => 'Wykryty tytuł lub null.',
+                            ],
+                            'has_subtitle' => [
+                                'type' => 'BOOLEAN',
+                                'description' => 'Czy wykryto podtytuł.',
+                            ],
+                            'subtitle' => [
+                                'type' => 'STRING',
+                                'nullable' => true,
+                                'description' => 'Wykryty podtytuł lub null.',
+                            ],
+                            'ocr_quality' => [
+                                'type' => 'NUMBER',
+                                'description' => 'Ocena jakości OCR przed korektą, 0.00–1.00.',
+                            ],
+                            'coherence' => [
+                                'type' => 'NUMBER',
+                                'description' => 'Spójność tekstu po korekcie AI, 0.00–1.00.',
+                            ],
+                            'page_number_detected' => [
+                                'type' => 'BOOLEAN',
+                                'description' => 'Czy wykryto numer strony na marginesie.',
+                            ],
+                            'page_number' => [
+                                'type' => 'STRING',
+                                'nullable' => true,
+                                'description' => 'Numer strony lub null; usunięty z corrected_text gdy wykryty.',
+                            ],
+                        ],
+                        'required' => [
+                            'corrected_text',
+                            'has_title',
+                            'title',
+                            'has_subtitle',
+                            'subtitle',
+                            'ocr_quality',
+                            'coherence',
+                            'page_number_detected',
+                            'page_number',
+                        ],
+                    ],
                 ],
             ]);
 
-        $payload =$response->json() ?? [];
+        $payload = $response->json() ?? [];
 
-        if (! $response->successful()) {$message = data_get($payload, 'error.message') ?? 'Gemini HTTP '.$response->status();
+        if (! $response->successful()) {
+            $message = data_get($payload, 'error.message') ?? 'Gemini HTTP '.$response->status();
             throw new RuntimeException($message);
         }
 
@@ -77,17 +154,85 @@ PROMPT;
             throw new RuntimeException("Generowanie tekstu przerwane (Reason: {$finishReason}).");
         }
 
-        $parts = data_get($payload, 'candidates.0.content.parts', []);$text = '';
-        foreach ($parts as$part) {
-            $text .= (string) ($part['text'] ?? '');
+        $parts = data_get($payload, 'candidates.0.content.parts', []);
+        $raw = '';
+        foreach ($parts as $part) {
+            $raw .= (string) ($part['text'] ?? '');
         }
-        $text = $this->stripWrappers(trim($text));
+        $raw = $this->stripWrappers(trim($raw));
 
-        if ($text === '') {
+        if ($raw === '') {
             throw new RuntimeException('Gemini zwróciło pustą odpowiedź.');
         }
 
-        return $text;
+        return $this->parseResult($raw);
+    }
+
+    /**
+     * @return array{
+     *   text: string,
+     *   title: string|null,
+     *   subtitle: string|null,
+     *   ocr_quality: float,
+     *   coherence: float,
+     *   page_number: string|null
+     * }
+     */
+    private function parseResult(string $raw): array
+    {
+        $decoded = json_decode($raw, true);
+        if (! is_array($decoded)) {
+            throw new RuntimeException('Gemini zwróciło niepoprawny JSON.');
+        }
+
+        $text = trim((string) ($decoded['corrected_text'] ?? ''));
+        if ($text === '') {
+            throw new RuntimeException('Gemini zwróciło pusty corrected_text.');
+        }
+
+        $hasTitle = (bool) ($decoded['has_title'] ?? false);
+        $title = $hasTitle ? $this->nullableString($decoded['title'] ?? null) : null;
+
+        $hasSubtitle = (bool) ($decoded['has_subtitle'] ?? false);
+        $subtitle = $hasSubtitle ? $this->nullableString($decoded['subtitle'] ?? null) : null;
+
+        $pageDetected = (bool) ($decoded['page_number_detected'] ?? false);
+        $pageNumber = $pageDetected ? $this->nullableString($decoded['page_number'] ?? null) : null;
+
+        return [
+            'text' => $text,
+            'title' => $title,
+            'subtitle' => $subtitle,
+            'ocr_quality' => $this->clampScore($decoded['ocr_quality'] ?? 0),
+            'coherence' => $this->clampScore($decoded['coherence'] ?? 0),
+            'page_number' => $pageNumber,
+        ];
+    }
+
+    private function nullableString(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $trimmed = trim((string) $value);
+        if ($trimmed === '' || strcasecmp($trimmed, 'null') === 0) {
+            return null;
+        }
+
+        return $trimmed;
+    }
+
+    private function clampScore(mixed $value): float
+    {
+        $n = is_numeric($value) ? (float) $value : 0.0;
+        if ($n < 0) {
+            $n = 0.0;
+        }
+        if ($n > 1) {
+            $n = 1.0;
+        }
+
+        return round($n, 2);
     }
 
     private function stripWrappers(string $text): string

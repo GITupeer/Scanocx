@@ -21,6 +21,12 @@ export { ScanQueueCard } from './ScanQueueCard';
 export { SegmentedControl, type SegmentOption } from './SegmentedControl';
 export { Sheet, SheetGroup } from './Sheet';
 export {
+  CornerCropEditor,
+  type CornerCropEditorHandle,
+  type CropPoint,
+  type CropQuad,
+} from './CornerCropEditor';
+export {
   BOTTOM_NAV_HEIGHT,
   colors,
   font,
