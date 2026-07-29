@@ -64,7 +64,15 @@ function normalizeAiAnalysis(raw: BookPage['aiAnalysis'] | undefined): AiAnalysi
       typeof raw.pageNumber === 'string' && raw.pageNumber.trim()
         ? raw.pageNumber.trim()
         : null,
+    promptTokens: normalizeTokenCount(raw.promptTokens),
+    outputTokens: normalizeTokenCount(raw.outputTokens),
+    totalTokens: normalizeTokenCount(raw.totalTokens),
   };
+}
+
+function normalizeTokenCount(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+  return Math.round(value);
 }
 
 function clampScore(n: number): number {

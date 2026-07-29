@@ -63,6 +63,9 @@ export type AiBatchJobMeta = {
   ocr_quality: number;
   coherence: number;
   page_number: string | null;
+  prompt_tokens?: number | null;
+  output_tokens?: number | null;
+  total_tokens?: number | null;
 };
 
 export type AiBatchJob = {
@@ -91,6 +94,9 @@ export type AiBatch = {
 export type AiUsagePage = {
   page_index: number | null;
   status: string;
+  prompt_tokens?: number | null;
+  output_tokens?: number | null;
+  total_tokens?: number | null;
 };
 
 export type AiUsageItem = {
@@ -104,6 +110,9 @@ export type AiUsageItem = {
   created_at: string | null;
   updated_at: string | null;
   pages: AiUsagePage[];
+  prompt_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
 };
 
 export class ApiError extends Error {

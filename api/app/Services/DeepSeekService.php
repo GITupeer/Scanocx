@@ -33,7 +33,10 @@ HINT;
      *   subtitle: string|null,
      *   ocr_quality: float,
      *   coherence: float,
-     *   page_number: string|null
+     *   page_number: string|null,
+     *   prompt_tokens: int|null,
+     *   output_tokens: int|null,
+     *   total_tokens: int|null
      * }
      */
     public function proofreadImageBytes(string $bytes, string $mimeType = 'image/jpeg'): array
@@ -55,7 +58,10 @@ HINT;
      *   subtitle: string|null,
      *   ocr_quality: float,
      *   coherence: float,
-     *   page_number: string|null
+     *   page_number: string|null,
+     *   prompt_tokens: int|null,
+     *   output_tokens: int|null,
+     *   total_tokens: int|null
      * }
      */
     public function proofreadText(string $ocrText): array
@@ -127,7 +133,10 @@ PROMPT;
             throw new RuntimeException('DeepSeek zwróciło pustą odpowiedź.');
         }
 
-        return $this->parseResult($raw);
+        $result = $this->parseResult($raw);
+        $usage = $this->parseUsage($payload);
+
+        return array_merge($result, $usage);
     }
 
     /**
@@ -137,7 +146,10 @@ PROMPT;
      *   subtitle: string|null,
      *   ocr_quality: float,
      *   coherence: float,
-     *   page_number: string|null
+     *   page_number: string|null,
+     *   prompt_tokens: int|null,
+     *   output_tokens: int|null,
+     *   total_tokens: int|null
      * }
      */
     public function proofreadImage(string $absolutePath, string $mimeType = 'image/jpeg'): array
@@ -192,6 +204,27 @@ PROMPT;
             'ocr_quality' => $this->clampScore($decoded['ocr_quality'] ?? 0),
             'coherence' => $this->clampScore($decoded['coherence'] ?? 0),
             'page_number' => $pageNumber,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array{
+     *   prompt_tokens: int|null,
+     *   output_tokens: int|null,
+     *   total_tokens: int|null
+     * }
+     */
+    private function parseUsage(array $payload): array
+    {
+        $prompt = data_get($payload, 'usage.prompt_tokens');
+        $completion = data_get($payload, 'usage.completion_tokens');
+        $total = data_get($payload, 'usage.total_tokens');
+
+        return [
+            'prompt_tokens' => is_numeric($prompt) ? (int) $prompt : null,
+            'output_tokens' => is_numeric($completion) ? (int) $completion : null,
+            'total_tokens' => is_numeric($total) ? (int) $total : null,
         ];
     }
 

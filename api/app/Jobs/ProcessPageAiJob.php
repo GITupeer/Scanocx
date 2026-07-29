@@ -72,6 +72,9 @@ class ProcessPageAiJob implements ShouldQueue
                     'ocr_quality' => $result['ocr_quality'],
                     'coherence' => $result['coherence'],
                     'page_number' => $result['page_number'],
+                    'prompt_tokens' => $result['prompt_tokens'] ?? null,
+                    'output_tokens' => $result['output_tokens'] ?? null,
+                    'total_tokens' => $result['total_tokens'] ?? null,
                 ];
                 if ($result['page_number'] !== null && $result['page_number'] !== '') {
                     $page->printed_page_number = $result['page_number'];
@@ -80,6 +83,9 @@ class ProcessPageAiJob implements ShouldQueue
 
                 $aiJob->status = 'done';
                 $aiJob->error = null;
+                $aiJob->prompt_tokens = $result['prompt_tokens'] ?? null;
+                $aiJob->output_tokens = $result['output_tokens'] ?? null;
+                $aiJob->total_tokens = $result['total_tokens'] ?? null;
                 $aiJob->save();
 
                 if ($aiJob->reserved_quota) {

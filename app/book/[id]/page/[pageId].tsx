@@ -400,6 +400,28 @@ export default function PageDetailScreen() {
               </View>
             </View>
 
+            {page.aiAnalysis &&
+            (page.aiAnalysis.promptTokens != null ||
+              page.aiAnalysis.outputTokens != null ||
+              page.aiAnalysis.totalTokens != null) ? (
+              <View style={styles.tokenRow}>
+                <Icon name="ai" size={14} color={colors.muted} />
+                <Text style={styles.tokenText}>
+                  Ostatnia korekta AI ·{' '}
+                  {page.aiAnalysis.promptTokens != null
+                    ? `${formatTokenCount(page.aiAnalysis.promptTokens)} in`
+                    : '— in'}
+                  {' · '}
+                  {page.aiAnalysis.outputTokens != null
+                    ? `${formatTokenCount(page.aiAnalysis.outputTokens)} out`
+                    : '— out'}
+                  {page.aiAnalysis.totalTokens != null
+                    ? ` · ${formatTokenCount(page.aiAnalysis.totalTokens)} łącznie`
+                    : ''}
+                </Text>
+              </View>
+            ) : null}
+
             <TextField
               label="Numer wydrukowany na stronie"
               value={printedPageNumber}
@@ -605,6 +627,11 @@ function formatScore(value: number): string {
   return value.toFixed(2);
 }
 
+function formatTokenCount(value: number | null): string {
+  if (value == null) return 'Brak danych';
+  return value.toLocaleString('pl-PL');
+}
+
 function AiAnalysisDialog({
   visible,
   analysis,
@@ -644,6 +671,21 @@ function AiAnalysisDialog({
                 : 'Nie wykryto'
             }
             muted={!analysis.pageNumber}
+          />
+          <AnalysisRow
+            label="Tokeny wejściowe"
+            value={formatTokenCount(analysis.promptTokens)}
+            muted={analysis.promptTokens == null}
+          />
+          <AnalysisRow
+            label="Tokeny wyjściowe"
+            value={formatTokenCount(analysis.outputTokens)}
+            muted={analysis.outputTokens == null}
+          />
+          <AnalysisRow
+            label="Tokeny łącznie"
+            value={formatTokenCount(analysis.totalTokens)}
+            muted={analysis.totalTokens == null}
           />
         </View>
       ) : null}
@@ -743,6 +785,20 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontSize: 12,
     fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  tokenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginTop: -space.sm,
+  },
+  tokenText: {
+    flex: 1,
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontWeight: '600',
+    color: colors.muted,
     fontVariant: ['tabular-nums'],
   },
   tabRow: {

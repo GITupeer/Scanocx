@@ -268,6 +268,11 @@ async function applyJobResults(
               ocrQuality: meta.ocr_quality,
               coherence: meta.coherence,
               pageNumber: meta.page_number,
+              promptTokens:
+                typeof meta.prompt_tokens === 'number' ? meta.prompt_tokens : null,
+              outputTokens:
+                typeof meta.output_tokens === 'number' ? meta.output_tokens : null,
+              totalTokens: typeof meta.total_tokens === 'number' ? meta.total_tokens : null,
             }
           : null;
       await withBookMetaLock(() =>

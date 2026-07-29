@@ -1342,6 +1342,11 @@ function formatScore(value: number): string {
   return value.toFixed(2);
 }
 
+function formatTokenCount(value: number | null): string {
+  if (value == null) return 'Brak danych';
+  return value.toLocaleString('pl-PL');
+}
+
 function AiAnalysisDialog({
   visible,
   analysis,
@@ -1383,6 +1388,21 @@ function AiAnalysisDialog({
                 : 'Nie wykryto'
             }
             muted={!analysis.pageNumber}
+          />
+          <AnalysisRow
+            label="Tokeny wejściowe"
+            value={formatTokenCount(analysis.promptTokens)}
+            muted={analysis.promptTokens == null}
+          />
+          <AnalysisRow
+            label="Tokeny wyjściowe"
+            value={formatTokenCount(analysis.outputTokens)}
+            muted={analysis.outputTokens == null}
+          />
+          <AnalysisRow
+            label="Tokeny łącznie"
+            value={formatTokenCount(analysis.totalTokens)}
+            muted={analysis.totalTokens == null}
           />
         </View>
       ) : null}

@@ -12,6 +12,9 @@ class AiJob extends Model
         'page_id',
         'status',
         'error',
+        'prompt_tokens',
+        'output_tokens',
+        'total_tokens',
         'reserved_quota',
     ];
 
@@ -19,6 +22,9 @@ class AiJob extends Model
     {
         return [
             'reserved_quota' => 'boolean',
+            'prompt_tokens' => 'integer',
+            'output_tokens' => 'integer',
+            'total_tokens' => 'integer',
         ];
     }
 

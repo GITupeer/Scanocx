@@ -29,6 +29,12 @@ export type AiAnalysis = {
   coherence: number;
   /** Numer strony wykryty przez AI (usunięty z tekstu); null gdy brak. */
   pageNumber: string | null;
+  /** Tokeny wejściowe ostatniego requestu AI; null gdy brak danych. */
+  promptTokens: number | null;
+  /** Tokeny wyjściowe ostatniego requestu AI; null gdy brak danych. */
+  outputTokens: number | null;
+  /** Suma tokenów (wejście + wyjście + ewentualne thinking); null gdy brak. */
+  totalTokens: number | null;
 };
 
 export type BookPage = {

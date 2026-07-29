@@ -55,8 +55,14 @@ class AiController extends Controller
                         return [
                             'page_index' => $job->page?->index,
                             'status' => $job->status,
+                            'prompt_tokens' => $job->prompt_tokens,
+                            'output_tokens' => $job->output_tokens,
+                            'total_tokens' => $job->total_tokens,
                         ];
                     })->all(),
+                    'prompt_tokens' => $jobs->sum(fn (AiJob $job) => (int) ($job->prompt_tokens ?? 0)),
+                    'output_tokens' => $jobs->sum(fn (AiJob $job) => (int) ($job->output_tokens ?? 0)),
+                    'total_tokens' => $jobs->sum(fn (AiJob $job) => (int) ($job->total_tokens ?? 0)),
                 ];
             })->all(),
         ]);
