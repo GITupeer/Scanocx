@@ -106,7 +106,7 @@ class ProcessPageAiJob implements ShouldQueue
 
         $this->failJob(
             $aiJob,
-            $exception?->getMessage() ?? 'Korekta AI nie powiodła się.',
+            $exception?->getMessage() ?? 'Analiza i Korekta AI nie powiodła się.',
             app(AiQuotaService::class)
         );
 

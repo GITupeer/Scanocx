@@ -15,11 +15,17 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { isApiConfigured } from '@/src/ai/config';
-import { getDisplayText, needsAiRewrite, needsManualReview } from '@/src/ai/displayText';
+import {
+  canRunAiRewrite,
+  getDisplayText,
+  needsAiRewrite,
+  needsManualReview,
+} from '@/src/ai/displayText';
 import {
   cancelAiForBook,
   cancelAiForPage,
   clearAiQuotaErrorsForBook,
+  enqueueAllAiForBook,
   enqueuePendingAiForBook,
   resumePendingCloudAi,
   useAiQueue,
@@ -114,7 +120,7 @@ function ocrOverlayCopy(page: BookPage): string {
   if (page.ocrStatus === 'idle') {
     return 'Zdjęcie zapisane — zaloguj się i uruchom odczyt tekstu.';
   }
-  if (page.aiStatus === 'pending') return 'Korekta AI w toku…';
+  if (page.aiStatus === 'pending') return 'Analiza i Korekta AI w toku…';
   if (page.aiStatus === 'error') {
     return page.aiError?.trim() || 'Błąd korekty AI.';
   }
@@ -173,6 +179,7 @@ export default function BookDetailScreen() {
   const [menuPage, setMenuPage] = useState<BookPage | null>(null);
   const [analysisTarget, setAnalysisTarget] = useState<BookPage | null>(null);
   const [bookMenu, setBookMenu] = useState(false);
+  const [aiMenuOpen, setAiMenuOpen] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameTitle, setRenameTitle] = useState('');
@@ -206,9 +213,17 @@ export default function BookDetailScreen() {
 
   // Każda strona zamknięta przez kolejkę zmienia meta.json — przeczytaj je ponownie,
   // żeby plakietki i tekst OCR/AI aktualizowały się na żywo.
+  // Nie odświeżaj podczas przygotowania/wysyłki (prepared) — to wywoływało
+  // Maximum update depth przy setkach stron.
   const lastOcrCompletedRef = useRef(ocrQueue.completed);
   const lastAiCompletedRef = useRef(aiQueue.completed);
   useEffect(() => {
+    if (
+      aiQueue.phase === 'preparing' ||
+      aiQueue.phase === 'sending'
+    ) {
+      return;
+    }
     if (
       ocrQueue.completed === lastOcrCompletedRef.current &&
       aiQueue.completed === lastAiCompletedRef.current
@@ -218,10 +233,10 @@ export default function BookDetailScreen() {
     lastOcrCompletedRef.current = ocrQueue.completed;
     lastAiCompletedRef.current = aiQueue.completed;
     void refresh();
-    if (aiQueue.completed > 0) {
+    if (aiQueue.completed > 0 && aiQueue.phase !== 'preparing' && aiQueue.phase !== 'sending') {
       void refreshAuth();
     }
-  }, [aiQueue.completed, ocrQueue.completed, refresh, refreshAuth]);
+  }, [aiQueue.completed, aiQueue.phase, ocrQueue.completed, refresh, refreshAuth]);
 
   // Strony, których analiza nie zdążyła się wykonać (np. apka zamknięta w trakcie),
   // wracają do kolejki — tylko dla zalogowanych, w limicie OCR. Duplikaty odrzuca kolejka.
@@ -322,6 +337,11 @@ export default function BookDetailScreen() {
     [book]
   );
 
+  const aiEligibleCount = useMemo(
+    () => (book ? book.pages.filter(canRunAiRewrite).length : 0),
+    [book]
+  );
+
   const aiRemaining = user?.quota?.remaining ?? null;
   const showAiLimitPromo =
     isLoggedIn &&
@@ -329,6 +349,23 @@ export default function BookDetailScreen() {
     aiQueue.total === 0 &&
     aiRemaining != null &&
     aiRemaining <= 0;
+
+  const openAiMenu = useCallback(() => {
+    if (!book || actionBusy) return;
+    if (!isApiConfigured()) return;
+    if (!isLoggedIn) {
+      router.push('/login');
+      return;
+    }
+    if (aiEligibleCount === 0) {
+      Alert.alert(
+        'Analiza i Korekta AI',
+        'Brak stron z gotowym OCR do analizy. Najpierw odczytaj tekst ze zdjęć.'
+      );
+      return;
+    }
+    setAiMenuOpen(true);
+  }, [actionBusy, aiEligibleCount, book, isLoggedIn, router]);
 
   const onRunBookOcr = useCallback(() => {
     if (!book) return;
@@ -363,24 +400,30 @@ export default function BookDetailScreen() {
     })();
   }, [book, isLoggedIn, router]);
 
-  const onRunBookAi = useCallback(() => {
-    if (!book) return;
-    if (!isApiConfigured()) return;
-    if (!isLoggedIn) {
-      router.push('/login');
-      return;
-    }
-    const waiting = book.pages.filter(needsAiRewrite).length;
-    if (waiting === 0) return;
-    void enqueuePendingAiForBook(book.id)
-      .then(async () => {
-        await refreshAuth();
-        await refresh();
-      })
-      .catch(() => {
-        // Status błędów widać w AiQueueCard / badge’ach stron.
-      });
-  }, [book, isLoggedIn, refresh, refreshAuth, router]);
+  const onRunBookAi = useCallback(
+    (mode: 'pending' | 'all') => {
+      if (!book) return;
+      if (!isApiConfigured()) return;
+      if (!isLoggedIn) {
+        router.push('/login');
+        return;
+      }
+      setAiMenuOpen(false);
+      const run =
+        mode === 'all'
+          ? enqueueAllAiForBook(book.id)
+          : enqueuePendingAiForBook(book.id);
+      void run
+        .then(async () => {
+          await refreshAuth();
+          await refresh();
+        })
+        .catch(() => {
+          // Status błędów widać w AiQueueCard / badge’ach stron.
+        });
+    },
+    [book, isLoggedIn, refresh, refreshAuth, router]
+  );
 
   const openPageMenu = useCallback(
     (page: BookPage) => {
@@ -778,7 +821,7 @@ export default function BookDetailScreen() {
             {aiQueue.total === 0 && !showAiLimitPromo ? (
               <AiPromoCard
                 count={aiPendingCount}
-                onPress={onRunBookAi}
+                onPress={openAiMenu}
                 disabled={actionBusy}
               />
             ) : null}
@@ -852,7 +895,7 @@ export default function BookDetailScreen() {
             icon="ai"
             label={aiPendingCount > 0 ? `AI ${aiPendingCount}` : 'AI'}
             disabled={!hasPages || actionBusy}
-            onPress={onRunBookAi}
+            onPress={openAiMenu}
           />
           <DockButton icon="more" label="Więcej" onPress={() => setBookMenu(true)} />
         </View>
@@ -919,6 +962,39 @@ export default function BookDetailScreen() {
       </Sheet>
 
       <Sheet
+        visible={aiMenuOpen}
+        onClose={() => setAiMenuOpen(false)}
+        eyebrow="Analiza i Korekta AI"
+        title="Wybierz zakres analizy">
+        <SheetGroup>
+          <Row
+            icon="ai"
+            label="Analiza i korekta nieukończonych"
+            detail={
+              aiPendingCount > 0
+                ? `${aiPendingCount} stron jeszcze bez AI`
+                : 'Wszystkie odczytane strony mają już korektę'
+            }
+            tone="primary"
+            disabled={aiPendingCount === 0 || actionBusy}
+            onPress={() => onRunBookAi('pending')}
+          />
+          <SheetDivider />
+          <Row
+            icon="stats"
+            label="Analiza wszystkich stron"
+            detail={
+              aiEligibleCount > 0
+                ? `${aiEligibleCount} stron z OCR — także już gotowych`
+                : 'Brak stron z gotowym OCR'
+            }
+            disabled={aiEligibleCount === 0 || actionBusy}
+            onPress={() => onRunBookAi('all')}
+          />
+        </SheetGroup>
+      </Sheet>
+
+      <Sheet
         visible={bookMenu}
         onClose={() => setBookMenu(false)}
         eyebrow="Książka"
@@ -961,16 +1037,16 @@ export default function BookDetailScreen() {
           <SheetDivider />
           <Row
             icon="ai"
-            label="Korekta AI całej książki"
+            label="Analiza i Korekta AI całej książki"
             detail={
-              aiPendingCount > 0
-                ? `${aiPendingCount} stron czeka na AI (pomija już gotowe)`
-                : 'Wszystkie odczytane strony mają już korektę AI'
+              aiEligibleCount > 0
+                ? `${aiPendingCount} bez korekty · ${aiEligibleCount} z OCR`
+                : 'Brak stron z gotowym OCR'
             }
-            disabled={!hasPages || actionBusy}
+            disabled={!hasPages || actionBusy || aiEligibleCount === 0}
             onPress={() => {
               setBookMenu(false);
-              onRunBookAi();
+              openAiMenu();
             }}
           />
           <SheetDivider />

@@ -32,7 +32,7 @@ export async function rewritePageWithAi(
     });
     return aiText;
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Korekta AI nie powiodła się.';
+    const message = error instanceof Error ? error.message : 'Analiza i Korekta AI nie powiodła się.';
     await withBookMetaLock(() =>
       updatePageAi(bookId, pageId, { aiStatus: 'error', aiError: message })
     );

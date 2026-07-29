@@ -103,32 +103,46 @@ export function releaseOcrQuota(count = 1): Promise<OcrQuota> {
   });
 }
 
-export async function analyzeBook(input: {
-  local_id: string;
-  title: string;
-  pages: Array<{
+export async function analyzeBook(
+  input: {
+    local_id: string;
+    title: string;
+    pages: Array<{
+      local_id: string;
+      index: number;
+      imageUri: string;
+      ocr_text?: string;
+      printed_page_number?: string | null;
+    }>;
+  },
+  onProgress?: (done: number, total: number) => void
+): Promise<AiBatch> {
+  const total = input.pages.length;
+  const pages: Array<{
     local_id: string;
     index: number;
-    imageUri: string;
+    image_base64: string;
+    mime_type: 'image/jpeg';
+    printed_page_number: string | null;
     ocr_text?: string;
-    printed_page_number?: string | null;
-  }>;
-}): Promise<AiBatch> {
-  const pages = await Promise.all(
-    input.pages.map(async (page) => {
-      const image_base64 = await FileSystem.readAsStringAsync(page.imageUri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      return {
-        local_id: page.local_id,
-        index: page.index,
-        image_base64,
-        mime_type: 'image/jpeg' as const,
-        printed_page_number: page.printed_page_number ?? null,
-        ocr_text: page.ocr_text,
-      };
-    })
-  );
+  }> = [];
+
+  // Sekwencyjnie — mniej peaków pamięci i przewidywalny postęp X/Y.
+  for (let i = 0; i < input.pages.length; i++) {
+    const page = input.pages[i]!;
+    const image_base64 = await FileSystem.readAsStringAsync(page.imageUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    pages.push({
+      local_id: page.local_id,
+      index: page.index,
+      image_base64,
+      mime_type: 'image/jpeg',
+      printed_page_number: page.printed_page_number ?? null,
+      ocr_text: page.ocr_text,
+    });
+    onProgress?.(i + 1, total);
+  }
 
   return apiRequest<AiBatch>('/api/ai/analyze', {
     method: 'POST',

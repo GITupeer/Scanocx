@@ -7,12 +7,17 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { useSyncExternalStore } from 'react';
 
 import { AI_POLL_INTERVAL_MS, isApiConfigured } from '@/src/ai/config';
-import { needsAiRewrite } from '@/src/ai/displayText';
+import { canRunAiRewrite, needsAiRewrite } from '@/src/ai/displayText';
 import * as api from '@/src/api/endpoints';
 import { ApiError } from '@/src/api/types';
 import { getAuthToken } from '@/src/api/token';
-import { getBook, listBooks, updatePageAi } from '@/src/storage/books';
+import { getBook, listBooks, updatePageAi, updatePagesAi } from '@/src/storage/books';
 import { withBookMetaLock } from '@/src/storage/lock';
+
+/** Ile stron w jednym requeście — unika OOM i ogromnego JSON z base64. */
+const AI_UPLOAD_CHUNK_SIZE = 12;
+/** Minimalny odstęp między odświeżeniami UI podczas przygotowania zdjęć. */
+const PROGRESS_PUBLISH_MS = 120;
 
 export type AiQueueJob = {
   bookId: string;
@@ -33,6 +38,8 @@ export type AiQueuePhase =
 export type AiQueueState = {
   total: number;
   completed: number;
+  /** Postęp przygotowania/wysyłki (osobno od completed analizy w chmurze). */
+  prepared: number;
   failed: number;
   remaining: number;
   currentPageIndex: number | null;
@@ -52,12 +59,15 @@ export type AiQueueState = {
 
 type PersistedAiBatch = {
   bookId: string;
-  batchId: number;
+  /** Wszystkie chunki jednej sesji wysyłki — po restarcie pollowane po kolei. */
+  batchIds: number[];
+  chunkTotals: number[];
 };
 
 const EMPTY_STATE: AiQueueState = {
   total: 0,
   completed: 0,
+  prepared: 0,
   failed: 0,
   remaining: 0,
   currentPageIndex: null,
@@ -77,6 +87,7 @@ const EMPTY_STATE: AiQueueState = {
 
 let total = 0;
 let completed = 0;
+let prepared = 0;
 let failed = 0;
 let phase: AiQueuePhase = 'idle';
 let phaseDetail = '';
@@ -89,6 +100,8 @@ let queuePosition: number | null = null;
 let cloudBatchId: number | null = null;
 let currentPageIds: string[] = [];
 let appliedDone = new Set<number>();
+let lastProgressPublishAt = 0;
+let progressPublishTimer: ReturnType<typeof setTimeout> | null = null;
 
 let snapshot: AiQueueState = EMPTY_STATE;
 const listeners = new Set<() => void>();
@@ -105,8 +118,12 @@ function activeBatchPath(): string {
   return `${root}ai-active-batch.json`;
 }
 
-async function persistActiveBatch(bookId: string, batchId: number): Promise<void> {
-  const payload: PersistedAiBatch = { bookId, batchId };
+async function persistActiveBatches(
+  bookId: string,
+  batchIds: number[],
+  chunkTotals: number[]
+): Promise<void> {
+  const payload: PersistedAiBatch = { bookId, batchIds, chunkTotals };
   await FileSystem.writeAsStringAsync(activeBatchPath(), JSON.stringify(payload));
 }
 
@@ -115,15 +132,28 @@ async function loadPersistedActiveBatch(): Promise<PersistedAiBatch | null> {
     const info = await FileSystem.getInfoAsync(activeBatchPath());
     if (!info.exists) return null;
     const raw = await FileSystem.readAsStringAsync(activeBatchPath());
-    const parsed = JSON.parse(raw) as PersistedAiBatch;
-    if (
-      typeof parsed?.bookId !== 'string' ||
-      typeof parsed?.batchId !== 'number' ||
-      !Number.isFinite(parsed.batchId)
-    ) {
-      return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedAiBatch> & { batchId?: number };
+    if (typeof parsed?.bookId !== 'string') return null;
+
+    // Kompatybilność ze starym formatem { bookId, batchId }.
+    if (Array.isArray(parsed.batchIds) && parsed.batchIds.length > 0) {
+      const batchIds = parsed.batchIds.filter(
+        (id): id is number => typeof id === 'number' && Number.isFinite(id)
+      );
+      if (batchIds.length === 0) return null;
+      const chunkTotals = Array.isArray(parsed.chunkTotals)
+        ? parsed.chunkTotals.filter(
+            (n): n is number => typeof n === 'number' && Number.isFinite(n)
+          )
+        : [];
+      return { bookId: parsed.bookId, batchIds, chunkTotals };
     }
-    return parsed;
+
+    if (typeof parsed.batchId === 'number' && Number.isFinite(parsed.batchId)) {
+      return { bookId: parsed.bookId, batchIds: [parsed.batchId], chunkTotals: [] };
+    }
+
+    return null;
   } catch {
     return null;
   }
@@ -138,9 +168,15 @@ async function clearPersistedActiveBatch(): Promise<void> {
 }
 
 function publish(): void {
+  if (progressPublishTimer) {
+    clearTimeout(progressPublishTimer);
+    progressPublishTimer = null;
+  }
+  lastProgressPublishAt = Date.now();
   snapshot = {
     total,
     completed,
+    prepared,
     failed,
     remaining: Math.max(0, total - completed),
     currentPageIndex: null,
@@ -161,6 +197,21 @@ function publish(): void {
     cloudBatchId,
   };
   listeners.forEach((listener) => listener());
+}
+
+/** Odśwież UI postępu wysyłki bez zalewania Reacta setState’ami. */
+function publishProgress(): void {
+  const now = Date.now();
+  const wait = PROGRESS_PUBLISH_MS - (now - lastProgressPublishAt);
+  if (wait <= 0) {
+    publish();
+    return;
+  }
+  if (progressPublishTimer) return;
+  progressPublishTimer = setTimeout(() => {
+    progressPublishTimer = null;
+    publish();
+  }, wait);
 }
 
 function stopTicker(): void {
@@ -186,6 +237,7 @@ function startTicker(): void {
 function resetCounters(): void {
   total = 0;
   completed = 0;
+  prepared = 0;
   failed = 0;
   phase = 'idle';
   phaseDetail = '';
@@ -235,19 +287,19 @@ async function applyJobResults(
       await withBookMetaLock(() =>
         updatePageAi(bookId, job.page_local_id, {
           aiStatus: 'error',
-          aiError: job.error ?? 'Korekta AI nie powiodła się.',
+          aiError: job.error ?? 'Analiza i Korekta AI nie powiodła się.',
         })
       );
     }
   }
 }
 
-/** Strony lokalnie „pending”, których nie ma już w batchu (np. usunięte z kolejki). */
+/** Strony lokalnie „pending”, których nie ma w żadnym znanym batchu sesji. */
 async function clearStalePendingPages(
   bookId: string,
-  jobs: Awaited<ReturnType<typeof api.fetchAiBatch>>['jobs']
+  knownPageIds: Iterable<string>
 ): Promise<void> {
-  const known = new Set(jobs.map((job) => job.page_local_id));
+  const known = new Set(knownPageIds);
   const book = await getBook(bookId);
   for (const page of book.pages) {
     if (page.aiStatus !== 'pending') continue;
@@ -258,11 +310,16 @@ async function clearStalePendingPages(
   }
 }
 
-async function pollUntilDone(bookId: string, batchId: number): Promise<void> {
+async function pollUntilDone(
+  bookId: string,
+  batchId: number,
+  completedOffset = 0,
+  failedOffset = 0
+): Promise<{ pageIds: string[]; failed: number; total: number }> {
   while (running) {
     const batch = await api.fetchAiBatch(batchId);
-    completed = batch.completed + batch.failed;
-    failed = batch.failed;
+    completed = completedOffset + batch.completed + batch.failed;
+    failed = failedOffset + batch.failed;
     queuePosition = batch.queue_position;
     currentPageIds = batch.jobs
       .filter((j) => j.status === 'queued' || j.status === 'processing')
@@ -292,21 +349,69 @@ async function pollUntilDone(bookId: string, batchId: number): Promise<void> {
       batch.completed + batch.failed >= batch.total;
 
     if (done) {
-      await clearStalePendingPages(bookId, batch.jobs);
       if (batch.failed > 0 && batch.completed === 0) {
         lastError = batch.jobs.find((j) => j.error)?.error ?? 'Analiza AI nie powiodła się.';
       }
-      return;
+      return {
+        pageIds: batch.jobs.map((j) => j.page_local_id).filter(Boolean),
+        failed: batch.failed,
+        total: batch.total,
+      };
     }
 
     await sleep(AI_POLL_INTERVAL_MS);
   }
+
+  return { pageIds: [], failed: 0, total: 0 };
 }
 
-function beginFinish(bookId: string, batchId: number, waitUntilDone: boolean): Promise<void> | void {
+async function resolveChunkTotals(
+  batchIds: number[],
+  chunkTotals: number[]
+): Promise<number[]> {
+  if (chunkTotals.length === batchIds.length) return chunkTotals;
+  const totals: number[] = [];
+  for (const batchId of batchIds) {
+    const batch = await api.fetchAiBatch(batchId);
+    totals.push(batch.total);
+  }
+  return totals;
+}
+
+function beginFinish(
+  bookId: string,
+  batchIds: number[],
+  waitUntilDone: boolean,
+  chunkTotals: number[]
+): Promise<void> | void {
   const finish = async () => {
+    const knownPageIds = new Set<string>();
     try {
-      await pollUntilDone(bookId, batchId);
+      const totals = await resolveChunkTotals(batchIds, chunkTotals);
+      await persistActiveBatches(bookId, batchIds, totals);
+
+      total = Math.max(
+        total,
+        totals.reduce((sum, n) => sum + n, 0)
+      );
+
+      let offset = 0;
+      let failedAccum = 0;
+      for (let i = 0; i < batchIds.length; i++) {
+        if (!running) break;
+        const batchId = batchIds[i]!;
+        cloudBatchId = batchId;
+        await persistActiveBatches(bookId, batchIds, totals);
+        const result = await pollUntilDone(bookId, batchId, offset, failedAccum);
+        for (const pageId of result.pageIds) knownPageIds.add(pageId);
+        failedAccum += result.failed;
+        offset += totals[i] ?? result.total;
+        completed = offset;
+        failed = failedAccum;
+        publish();
+      }
+
+      await clearStalePendingPages(bookId, knownPageIds);
     } catch (error) {
       lastError = error instanceof Error ? error.message : 'Błąd odczytu statusu kolejki.';
       publish();
@@ -334,11 +439,15 @@ function beginFinish(bookId: string, batchId: number, waitUntilDone: boolean): P
   void finish().catch(() => undefined);
 }
 
-async function resumeCloudAnalysis(bookId: string, batchId: number): Promise<void> {
-  if (running) return;
+async function resumeCloudAnalysis(
+  bookId: string,
+  batchIds: number[],
+  chunkTotals: number[] = []
+): Promise<void> {
+  if (running || batchIds.length === 0) return;
 
   running = true;
-  cloudBatchId = batchId;
+  cloudBatchId = batchIds[0] ?? null;
   lastError = null;
   appliedDone = new Set();
   phase = 'waiting';
@@ -349,11 +458,13 @@ async function resumeCloudAnalysis(bookId: string, batchId: number): Promise<voi
     const pendingCount = book.pages.filter((page) => page.aiStatus === 'pending').length;
     total = Math.max(pendingCount, 1);
     completed = 0;
+    prepared = 0;
     failed = 0;
     currentPageIds = book.pages.filter((page) => page.aiStatus === 'pending').map((p) => p.id);
   } catch {
     total = 1;
     completed = 0;
+    prepared = 0;
     failed = 0;
     currentPageIds = [];
   }
@@ -362,54 +473,14 @@ async function resumeCloudAnalysis(bookId: string, batchId: number): Promise<voi
   publish();
 
   try {
-    await persistActiveBatch(bookId, batchId);
-    const batch = await api.fetchAiBatch(batchId);
-    total = Math.max(batch.total, 1);
-    completed = batch.completed + batch.failed;
-    failed = batch.failed;
-    queuePosition = batch.queue_position;
-    currentPageIds = batch.jobs
-      .filter((j) => j.status === 'queued' || j.status === 'processing')
-      .map((j) => j.page_local_id);
-    phase =
-      batch.status === 'queued' || (queuePosition != null && queuePosition > 1)
-        ? 'queued'
-        : 'processing';
-    phaseDetail =
-      queuePosition != null && queuePosition > 1
-        ? `W kolejce — pozycja ${queuePosition}`
-        : 'Analiza AI w toku…';
-    publish();
-
-    const alreadyDone =
-      batch.status === 'done' ||
-      batch.status === 'failed' ||
-      batch.status === 'partial' ||
-      batch.completed + batch.failed >= batch.total;
-
-    if (alreadyDone) {
-      await applyJobResults(bookId, batch.jobs);
-      await clearStalePendingPages(bookId, batch.jobs);
-      if (batch.failed > 0 && batch.completed === 0) {
-        lastError = batch.jobs.find((j) => j.error)?.error ?? 'Analiza AI nie powiodła się.';
-      }
-      await clearPersistedActiveBatch();
-      stopTicker();
-      running = false;
-      phase = 'idle';
-      phaseDetail = '';
-      queuePosition = null;
-      publish();
-      setTimeout(() => {
-        if (!running) {
-          resetCounters();
-          publish();
-        }
-      }, 2500);
-      return;
-    }
-
-    beginFinish(bookId, batchId, false);
+    const totals = await resolveChunkTotals(batchIds, chunkTotals);
+    total = Math.max(
+      totals.reduce((sum, n) => sum + n, 0),
+      1
+    );
+    prepared = total;
+    await persistActiveBatches(bookId, batchIds, totals);
+    beginFinish(bookId, batchIds, false, totals);
   } catch (error) {
     lastError = error instanceof Error ? error.message : 'Nie udało się wznowić analizy AI.';
     running = false;
@@ -426,18 +497,45 @@ async function resumeCloudAnalysis(bookId: string, batchId: number): Promise<voi
   }
 }
 
-async function findBatchForPendingBook(
+async function findBatchesForPendingBook(
   bookId: string
-): Promise<{ batchId: number } | null> {
+): Promise<{ batchIds: number[]; chunkTotals: number[] } | null> {
   const usage = await api.fetchAiUsage();
-  const forBook = usage.data.filter((item) => item.book_local_id === bookId);
-  const active = forBook.find(
+  const forBook = usage.data
+    .filter((item) => item.book_local_id === bookId)
+    .sort((a, b) => a.id - b.id);
+  if (forBook.length === 0) return null;
+
+  const active = forBook.filter(
     (item) => item.status === 'queued' || item.status === 'processing'
   );
-  if (active) return { batchId: active.id };
-  const latest = forBook[0];
-  if (latest) return { batchId: latest.id };
-  return null;
+
+  // Aktywne chunki + wszystkie późniejsze z tej samej wysyłki.
+  // Bez aktywnych: najnowsza „fala” (okno 30 min od najnowszego batcha),
+  // żeby dociągnąć wyniki niesynchonizowane lokalnie.
+  let selected = forBook;
+  if (active.length > 0) {
+    const firstActiveId = Math.min(...active.map((item) => item.id));
+    selected = forBook.filter((item) => item.id >= firstActiveId);
+  } else {
+    const latest = forBook[forBook.length - 1]!;
+    const latestAt = latest.created_at ? Date.parse(latest.created_at) : NaN;
+    if (Number.isFinite(latestAt)) {
+      const windowMs = 30 * 60 * 1000;
+      selected = forBook.filter((item) => {
+        const at = item.created_at ? Date.parse(item.created_at) : NaN;
+        return Number.isFinite(at) && latestAt - at <= windowMs;
+      });
+    } else {
+      selected = [latest];
+    }
+  }
+
+  if (selected.length === 0) return null;
+  return {
+    batchIds: selected.map((item) => item.id),
+    chunkTotals: selected.map((item) => item.total),
+  };
 }
 
 async function resetOrphanPendingPages(bookId: string): Promise<void> {
@@ -462,7 +560,7 @@ export async function resumePendingCloudAi(preferredBookId?: string): Promise<vo
   const persisted = await loadPersistedActiveBatch();
   if (persisted) {
     if (!preferredBookId || preferredBookId === persisted.bookId) {
-      await resumeCloudAnalysis(persisted.bookId, persisted.batchId);
+      await resumeCloudAnalysis(persisted.bookId, persisted.batchIds, persisted.chunkTotals);
       return;
     }
   }
@@ -482,9 +580,9 @@ export async function resumePendingCloudAi(preferredBookId?: string): Promise<vo
     if (pending.length === 0) continue;
 
     try {
-      const match = await findBatchForPendingBook(book.id);
+      const match = await findBatchesForPendingBook(book.id);
       if (match) {
-        await resumeCloudAnalysis(book.id, match.batchId);
+        await resumeCloudAnalysis(book.id, match.batchIds, match.chunkTotals);
         return;
       }
       await resetOrphanPendingPages(book.id);
@@ -583,44 +681,81 @@ async function startCloudAnalysis(
   running = true;
   total = pages.length;
   completed = 0;
+  prepared = 0;
   failed = 0;
   lastError = null;
   currentPageIds = pages.map((p) => p.id);
   appliedDone = new Set();
   phase = 'preparing';
-  phaseDetail = 'Wysyłam zdjęcia stron do chmury…';
+  phaseDetail = `Przygotowuję zdjęcia… 0/${pages.length}`;
   startTicker();
   publish();
 
-  for (const page of pages) {
-    await withBookMetaLock(() =>
-      updatePageAi(bookId, page.id, { aiStatus: 'pending', aiError: null, aiAnalysis: null })
-    );
-  }
+  await withBookMetaLock(() =>
+    updatePagesAi(
+      bookId,
+      pages.map((page) => ({
+        pageId: page.id,
+        aiStatus: 'pending' as const,
+        aiError: null,
+        aiAnalysis: null,
+      }))
+    )
+  );
+
+  const batchIds: number[] = [];
+  const chunkTotals: number[] = [];
 
   try {
-    const batch = await api.analyzeBook({
-      local_id: book.id,
-      title: book.title,
-      pages: pages.map((page) => ({
-        local_id: page.id,
-        index: page.index,
-        imageUri: page.imageUri,
-        printed_page_number: page.printedPageNumber,
-      })),
-    });
+    for (let offset = 0; offset < pages.length; offset += AI_UPLOAD_CHUNK_SIZE) {
+      const chunk = pages.slice(offset, offset + AI_UPLOAD_CHUNK_SIZE);
+      phase = 'preparing';
+      phaseDetail = `Przygotowuję zdjęcia… ${prepared}/${total}`;
+      publish();
 
-    cloudBatchId = batch.id;
-    queuePosition = batch.queue_position;
+      const batch = await api.analyzeBook(
+        {
+          local_id: book.id,
+          title: book.title,
+          pages: chunk.map((page) => ({
+            local_id: page.id,
+            index: page.index,
+            imageUri: page.imageUri,
+            printed_page_number: page.printedPageNumber,
+          })),
+        },
+        (doneInChunk) => {
+          prepared = offset + doneInChunk;
+          phase = doneInChunk < chunk.length ? 'preparing' : 'sending';
+          phaseDetail =
+            doneInChunk < chunk.length
+              ? `Przygotowuję zdjęcia… ${prepared}/${total}`
+              : `Wysyłam strony do chmury… ${prepared}/${total}`;
+          publishProgress();
+        }
+      );
+
+      prepared = offset + chunk.length;
+      batchIds.push(batch.id);
+      chunkTotals.push(chunk.length);
+      cloudBatchId = batch.id;
+      queuePosition = batch.queue_position;
+      await persistActiveBatches(bookId, batchIds, chunkTotals);
+      phase = 'sending';
+      phaseDetail = `Wysłano ${prepared}/${total}…`;
+      publish();
+    }
+
+    completed = 0;
+    prepared = total;
     phase = 'queued';
     phaseDetail =
       queuePosition != null
         ? `W kolejce — pozycja ${queuePosition}`
         : 'Dodano do kolejki AI…';
-    await persistActiveBatch(bookId, batch.id);
     publish();
 
-    const maybePromise = beginFinish(bookId, batch.id, waitUntilDone);
+    const maybePromise = beginFinish(bookId, batchIds, waitUntilDone, chunkTotals);
     if (waitUntilDone && maybePromise) {
       await maybePromise;
     }
@@ -640,16 +775,22 @@ async function startCloudAnalysis(
     }
 
     const message = error instanceof Error ? error.message : 'Błąd analizy AI.';
-    for (const page of pages) {
-      const fresh = (await getBook(bookId)).pages.find((p) => p.id === page.id);
-      if (fresh?.aiStatus === 'done') continue;
-      await withBookMetaLock(() =>
-        updatePageAi(bookId, page.id, {
-          aiStatus: 'error',
-          aiError: message,
-        })
-      );
-    }
+    const bookNow = await getBook(bookId);
+    const doneIds = new Set(
+      bookNow.pages.filter((p) => p.aiStatus === 'done').map((p) => p.id)
+    );
+    await withBookMetaLock(() =>
+      updatePagesAi(
+        bookId,
+        pages
+          .filter((page) => !doneIds.has(page.id))
+          .map((page) => ({
+            pageId: page.id,
+            aiStatus: 'error' as const,
+            aiError: message,
+          }))
+      )
+    );
     lastError = message;
     running = false;
     phase = 'idle';
@@ -695,6 +836,15 @@ export async function enqueuePendingAiForBook(bookId: string): Promise<number> {
   return startCloudAnalysis(bookId, undefined, false);
 }
 
+/** Korekta AI wszystkich stron z gotowym OCR — także tych już oznaczonych jako done. */
+export async function enqueueAllAiForBook(bookId: string): Promise<number> {
+  if (!isApiConfigured()) return 0;
+  const book = await getBook(bookId);
+  const pageIds = book.pages.filter(canRunAiRewrite).map((page) => page.id);
+  if (pageIds.length === 0) return 0;
+  return startCloudAnalysis(bookId, pageIds, false);
+}
+
 /** Usuwa stare błędy limitu AI (np. „Przekroczono limit”) — strony wracają do idle. */
 export async function clearAiQuotaErrorsForBook(bookId: string): Promise<boolean> {
   const book = await getBook(bookId);
@@ -711,7 +861,7 @@ export async function runPageAiExclusive(bookId: string, pageId: string): Promis
   const book = await getBook(bookId);
   const page = book.pages.find((p) => p.id === pageId);
   if (!page || page.aiStatus !== 'done' || !page.aiText.trim()) {
-    throw new Error(page?.aiError ?? 'Korekta AI nie powiodła się.');
+    throw new Error(page?.aiError ?? 'Analiza i Korekta AI nie powiodła się.');
   }
   return page.aiText;
 }

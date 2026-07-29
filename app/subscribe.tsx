@@ -39,7 +39,7 @@ type Feature = {
 const FEATURES: Feature[] = [
   {
     icon: "ai",
-    title: "Korekta AI",
+    title: "Analiza i Korekta AI",
     free: "5 stron / miesiąc",
     pro: "500 stron / miesiąc",
   },

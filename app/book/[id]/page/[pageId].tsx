@@ -423,7 +423,7 @@ export default function PageDetailScreen() {
         <View style={styles.dock}>
           <IconButton
             name="ai"
-            accessibilityLabel="Korekta AI"
+            accessibilityLabel="Analiza i Korekta AI"
             variant="soft"
             size={50}
             disabled={busy}
@@ -478,7 +478,7 @@ export default function PageDetailScreen() {
           <View style={styles.sheetDivider} />
           <Row
             icon="ai"
-            label="Korekta AI"
+            label="Analiza i Korekta AI"
             detail="Popraw literówki i błędy odczytu bez skracania tekstu"
             disabled={busy}
             onPress={() => {

@@ -15,7 +15,8 @@ function userDetail(queue: ReturnType<typeof useAiQueue>): string {
     return `W kolejce — pozycja ${queue.queuePosition}`;
   }
   if (queue.phase === 'preparing' || queue.phase === 'sending') {
-    return 'Wysyłam strony do chmury…';
+    if (queue.phaseDetail.trim()) return queue.phaseDetail;
+    return `Wysyłam strony do chmury… ${queue.prepared}/${queue.total}`;
   }
   if (queue.phase === 'queued' || queue.phase === 'waiting') {
     return 'Oczekiwanie w kolejce…';
@@ -37,7 +38,8 @@ export function AiQueueCard({ style }: { style?: StyleProp<ViewStyle> }) {
 
   if (queue.total === 0) return null;
 
-  const done = Math.min(queue.completed, queue.total);
+  const uploading = queue.phase === 'preparing' || queue.phase === 'sending';
+  const done = Math.min(uploading ? queue.prepared : queue.completed, queue.total);
 
   return (
     <View style={[styles.wrap, style]}>
@@ -57,7 +59,7 @@ export function AiQueueCard({ style }: { style?: StyleProp<ViewStyle> }) {
         )}
 
         <View style={styles.headerText}>
-          <Text style={styles.title}>Korekta AI</Text>
+          <Text style={styles.title}>Analiza i Korekta AI</Text>
           <Text style={styles.detail} numberOfLines={2}>
             {userDetail(queue)}
           </Text>
