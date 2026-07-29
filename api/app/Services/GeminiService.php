@@ -59,6 +59,12 @@ FORMAT ODPOWIEDZI:
 Zwróć WYŁĄCZNIE jeden obiekt JSON zgodny ze schematem — bez markdown, komentarzy ani tekstu poza JSON.
 PROMPT;
 
+    /** Długi bok JPEG wysyłanego do Google — wystarczy do OCR tekstu. */
+    private const AI_MAX_EDGE = 1600;
+
+    /** Jakość JPEG (0–100) przed wysyłką do Gemini. */
+    private const AI_JPEG_QUALITY = 72;
+
     /**
      * @return array{
      *   text: string,
@@ -79,6 +85,8 @@ PROMPT;
         if ($bytes === '') {
             throw new RuntimeException('Brak zdjęcia strony do analizy AI.');
         }
+
+        [$bytes, $mimeType] = $this->downscaleForGemini($bytes, $mimeType);
 
         $endpoint = sprintf('https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent', self::MODEL);
 
@@ -294,5 +302,59 @@ PROMPT;
         }
 
         return trim($cleaned);
+    }
+
+    /**
+     * Skaluje i kompresuje zdjęcie przed wysyłką do Gemini (mniejszy payload).
+     *
+     * @return array{0: string, 1: string} [bytes, mimeType]
+     */
+    private function downscaleForGemini(string $bytes, string $mimeType): array
+    {
+        if (! function_exists('imagecreatefromstring') || ! function_exists('imagejpeg')) {
+            return [$bytes, $mimeType];
+        }
+
+        $image = @imagecreatefromstring($bytes);
+        if ($image === false) {
+            return [$bytes, $mimeType];
+        }
+
+        $width = imagesx($image);
+        $height = imagesy($image);
+        if ($width < 1 || $height < 1) {
+            imagedestroy($image);
+
+            return [$bytes, $mimeType];
+        }
+
+        $longEdge = max($width, $height);
+        if ($longEdge > self::AI_MAX_EDGE) {
+            $scale = self::AI_MAX_EDGE / $longEdge;
+            $newWidth = max(1, (int) round($width * $scale));
+            $newHeight = max(1, (int) round($height * $scale));
+            $scaled = imagescale($image, $newWidth, $newHeight);
+            imagedestroy($image);
+            if ($scaled === false) {
+                return [$bytes, $mimeType];
+            }
+            $image = $scaled;
+        }
+
+        ob_start();
+        $ok = imagejpeg($image, null, self::AI_JPEG_QUALITY);
+        $compressed = ob_get_clean();
+        imagedestroy($image);
+
+        if (! $ok || ! is_string($compressed) || $compressed === '') {
+            return [$bytes, $mimeType];
+        }
+
+        // Nie powiększaj przypadkiem (np. już mocno skompresowany PNG → większy JPEG).
+        if (strlen($compressed) >= strlen($bytes) && str_starts_with($mimeType, 'image/jpeg')) {
+            return [$bytes, $mimeType];
+        }
+
+        return [$compressed, 'image/jpeg'];
     }
 }

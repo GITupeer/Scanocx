@@ -38,19 +38,49 @@ HINT;
      */
     public function proofreadImageBytes(string $bytes, string $mimeType = 'image/jpeg'): array
     {
+        // Oficjalne API DeepSeek (v4-flash / v4-pro) jest wyłącznie tekstowe —
+        // content.type=image_url jest odrzucane: "unknown variant `image_url`, expected `text`".
+        // Vision działa tylko w web chacie DeepSeek, nie w API.
+        throw new RuntimeException(
+            'DeepSeek API nie obsługuje obrazów (tylko tekst). Korekta ze zdjęcia wymaga Gemini (AI_PROVIDER=gemini) albo innego modelu vision.'
+        );
+    }
+
+    /**
+     * Korekta samego tekstu OCR (bez zdjęcia) — to DeepSeek API potrafi.
+     *
+     * @return array{
+     *   text: string,
+     *   title: string|null,
+     *   subtitle: string|null,
+     *   ocr_quality: float,
+     *   coherence: float,
+     *   page_number: string|null
+     * }
+     */
+    public function proofreadText(string $ocrText): array
+    {
         $apiKey = trim((string) config('services.deepseek.key'));
         if ($apiKey === '') {
             throw new RuntimeException('Brak klucza DEEPSEEK_API_KEY na serwerze.');
         }
 
-        if ($bytes === '') {
-            throw new RuntimeException('Brak zdjęcia strony do analizy AI.');
+        $ocrText = trim($ocrText);
+        if ($ocrText === '') {
+            throw new RuntimeException('Brak tekstu OCR do korekty DeepSeek.');
         }
 
         $model = trim((string) config('services.deepseek.model', self::MODEL)) ?: self::MODEL;
         $baseUrl = rtrim((string) config('services.deepseek.base_url', 'https://api.deepseek.com'), '/');
         $endpoint = $baseUrl.'/chat/completions';
-        $dataUri = 'data:'.$mimeType.';base64,'.base64_encode($bytes);
+
+        $textPrompt = <<<'PROMPT'
+Jesteś profesjonalnym korektorem tekstu polskiego. Dostajesz tekst OCR strony książki (bez zdjęcia).
+Popraw literówki, polskie znaki, interpunkcję i kapitalizację. Nie skracaj, nie streszczaj, nie dodawaj treści.
+Zachowaj podział dialogów/akapitów (\n / \n\n). Scal wyrazy ucięte dywizem na końcu wiersza.
+Jeśli wykryjesz numer strony w tekście — wpisz go w page_number i usuń z corrected_text.
+Oceń ocr_quality (jakość wejściowego OCR) i coherence (spójność po korekcie) w skali 0.00–1.00.
+PROMPT;
 
         $response = Http::timeout(self::TIMEOUT_SECONDS)
             ->withToken($apiKey)
@@ -64,22 +94,11 @@ HINT;
                 'messages' => [
                     [
                         'role' => 'system',
-                        'content' => GeminiService::SYSTEM_PROMPT."\n\n".self::JSON_SCHEMA_HINT,
+                        'content' => $textPrompt."\n\n".self::JSON_SCHEMA_HINT,
                     ],
                     [
                         'role' => 'user',
-                        'content' => [
-                            [
-                                'type' => 'text',
-                                'text' => 'Odczytaj i popraw tekst ze zdjęcia strony książki. Zwróć JSON zgodnie ze schematem.',
-                            ],
-                            [
-                                'type' => 'image_url',
-                                'image_url' => [
-                                    'url' => $dataUri,
-                                ],
-                            ],
-                        ],
+                        'content' => "Popraw poniższy tekst OCR i zwróć JSON zgodnie ze schematem.\n\n".$ocrText,
                     ],
                 ],
             ]);

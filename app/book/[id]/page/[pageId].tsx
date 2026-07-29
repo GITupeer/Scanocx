@@ -4,6 +4,7 @@ import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'rea
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import { isApiConfigured } from '@/src/ai/config';
 import {
@@ -48,6 +49,17 @@ import {
 
 type TextTab = 'ai' | 'ocr';
 
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) {
+    const kb = bytes / 1024;
+    return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
+  }
+  const mb = bytes / (1024 * 1024);
+  return `${mb < 10 ? mb.toFixed(2) : mb.toFixed(1)} MB`;
+}
+
 export default function PageDetailScreen() {
   const { id, pageId } = useLocalSearchParams<{ id: string; pageId: string }>();
   const router = useRouter();
@@ -67,6 +79,7 @@ export default function PageDetailScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [imageSizeLabel, setImageSizeLabel] = useState<string | null>(null);
   const ocrQueue = useOcrQueue();
   const aiQueue = useAiQueue();
 
@@ -158,6 +171,31 @@ export default function PageDetailScreen() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const uri = page?.imageUri;
+    if (!uri) {
+      setImageSizeLabel(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const info = await FileSystem.getInfoAsync(uri);
+        if (cancelled) return;
+        if (info.exists && 'size' in info && typeof info.size === 'number') {
+          setImageSizeLabel(formatBytes(info.size));
+        } else {
+          setImageSizeLabel(null);
+        }
+      } catch {
+        if (!cancelled) setImageSizeLabel(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [page?.imageUri]);
 
   const analyzingThisPage =
     ocrQueue.currentPageId === pageId || aiQueue.currentPageIds.includes(pageId);
@@ -357,6 +395,7 @@ export default function PageDetailScreen() {
                 <Icon name="notes" size={12} color={colors.white} />
                 <Text style={styles.imageCounterText}>
                   {position} / {pagesOrdered.length}
+                  {imageSizeLabel ? ` · ${imageSizeLabel}` : ''}
                 </Text>
               </View>
             </View>
