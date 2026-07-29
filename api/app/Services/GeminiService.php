@@ -20,19 +20,26 @@ TWOJE ZADANIE — ODCZYT I KOREKTA:
 2. Popraw oczywiste błędy wynikające z nieostrości / skanu: literówki, brakujące polskie znaki (ąęćłńóśźż), rozbite lub sklejone słowa, błędną interpunkcję, złą kapitalizację.
 3. BEZWZGLĘDNIE NIE SKRACAJ, NIE STRESZCZAJ ANI NIE POMIJAJ ŻADNEGO ZDANIA, AKAPITU ANI FRAGMENTU.
 4. Nie dodawaj treści, której nie ma na stronie. Nie „ulepszaj” stylu literackiego.
-5. Zachowaj oryginalne znaczenie, styl, rejestr językowy i podział na akapity.
-6. Scalaj wyrazy ucięte / przeniesione do nowej linii (łamanie wyrazów w druku):
+5. Zachowaj oryginalne znaczenie, styl i rejestr językowy.
+6. PODZIAŁ WIERSZY / AKAPITÓW — stosuj nowe linie (\n) tam, gdzie to wynika ze struktury tekstu na stronie:
+   - Nowa kwestia dialogu (myślnik / pauza dialogowa, cudzysłów otwierający wypowiedź) → zawsze nowa linia.
+   - Zmiana mówcy / kolejna replika → nowa linia.
+   - Nowy akapit w prozie → pusty wiersz (\n\n) lub co najmniej nowa linia, zgodnie z układem na stronie.
+   - Nagłówek / tytuł / podtytuł → osobna linia (nie sklejaj z treścią).
+   - Wiersze wiersza / poematu → zachowaj podział na linie.
+   - NIE wstawiaj nowej linii w środku zwykłego zdania tylko dlatego, że w druku złamano wiersz z braku miejsca (łamanie techniczne).
+7. Scalaj wyrazy ucięte / przeniesione do nowej linii (łamanie wyrazów w druku):
    - Usuń dywiz na końcu wiersza i sklej obie części w jedno słowo.
    - Przykłady: „rozcią- / gnięte” → „rozciągnięte”; „książ-ka” → „książka”.
    - Prawdziwe łączniki (np. „biało-czerwony”) zostaw bez zmian.
-7. Jeśli fragment jest nieczytelny, zostaw najbliższą sensowną rekonstrukcję — nie wymyślaj zdań od zera.
-8. Ignoruj elementy poza treścią (np. brud, cienie, palce, krawędź stołu) — nie opisuj ich.
-9. WIĘCEJ NIŻ JEDNA STRONA NA ZDJĘCIU: jeśli widać więcej niż jedną stronę książki (np. cała lewa + pół prawej, albo fragment sąsiedniej strony przy krawędzi), zwróć dane WYŁĄCZNIE dla tej jednej pełnej / najbardziej kompletnej strony. Całkowicie zignoruj tekst z niepełnych / uciętych stron obok — nie mieszaj ich treści, tytułów ani numerów stron.
+8. Jeśli fragment jest nieczytelny, zostaw najbliższą sensowną rekonstrukcję — nie wymyślaj zdań od zera.
+9. Ignoruj elementy poza treścią (np. brud, cienie, palce, krawędź stołu) — nie opisuj ich.
+10. WIĘCEJ NIŻ JEDNA STRONA NA ZDJĘCIU: jeśli widać więcej niż jedną stronę książki (np. cała lewa + pół prawej, albo fragment sąsiedniej strony przy krawędzi), zwróć dane WYŁĄCZNIE dla tej jednej pełnej / najbardziej kompletnej strony. Całkowicie zignoruj tekst z niepełnych / uciętych stron obok — nie mieszaj ich treści, tytułów ani numerów stron.
 
 TWOJE ZADANIE — ANALIZA (do pól JSON):
-10. Wykryj tytuł strony / rozdziału (title) oraz podtytuł (subtitle), jeśli występują jako nagłówki — nie myl z pierwszym zdaniem akapitu.
-11. Oceń jakość skanu / czytelność zdjęcia (ocr_quality) oraz spójność / czytelność tekstu po Twojej korekcie (coherence) w skali 0.00–1.00 (dwa miejsca po przecinku).
-12. Wykryj numer strony wydrukowany na marginesie (page_number). Jeśli go wykryjesz:
+11. Wykryj tytuł strony / rozdziału (title) oraz podtytuł (subtitle), jeśli występują jako nagłówki — nie myl z pierwszym zdaniem akapitu.
+12. Oceń jakość skanu / czytelność zdjęcia (ocr_quality) oraz spójność / czytelność tekstu po Twojej korekcie (coherence) w skali 0.00–1.00 (dwa miejsca po przecinku).
+13. Wykryj numer strony wydrukowany na marginesie (page_number). Jeśli go wykryjesz:
     - wpisz go w pole page_number,
     - USUŃ go z corrected_text (nie zostawiaj samotnego numeru na początku/końcu).
     Jeśli nie wykryjesz — page_number = null.
@@ -93,7 +100,7 @@ PROMPT;
                         'properties' => [
                             'corrected_text' => [
                                 'type' => 'STRING',
-                                'description' => 'Pełny poprawiony tekst strony bez numeru strony.',
+                                'description' => 'Pełny poprawiony tekst strony bez numeru strony; z \\n przy dialogach, akapitach i nagłówkach.',
                             ],
                             'has_title' => [
                                 'type' => 'BOOLEAN',
