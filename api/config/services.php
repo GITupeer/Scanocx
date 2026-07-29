@@ -39,4 +39,17 @@ return [
         'key' => env('GEMINI_API_KEY'),
     ],
 
+    'deepseek' => [
+        'key' => env('DEEPSEEK_API_KEY'),
+        'base_url' => env('DEEPSEEK_BASE_URL', 'https://api.deepseek.com'),
+        'model' => env('DEEPSEEK_MODEL', 'deepseek-v4-flash'),
+    ],
+
+    /*
+    | AI image proofread provider: gemini | deepseek
+    */
+    'ai' => [
+        'provider' => env('AI_PROVIDER', 'gemini'),
+    ],
+
 ];

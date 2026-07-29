@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\AiJob;
 use App\Services\AiQuotaService;
+use App\Services\DeepSeekService;
 use App\Services\GeminiService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -28,7 +29,7 @@ class ProcessPageAiJob implements ShouldQueue
         }
     }
 
-    public function handle(GeminiService $gemini, AiQuotaService $quota): void
+    public function handle(GeminiService $gemini, DeepSeekService $deepseek, AiQuotaService $quota): void
     {
         $aiJob = AiJob::query()->with(['page', 'batch.user'])->find($this->aiJobId);
         if (! $aiJob || ! in_array($aiJob->status, ['queued', 'processing'], true)) {
@@ -54,12 +55,18 @@ class ProcessPageAiJob implements ShouldQueue
             }
 
             $mimeType = (string) ($page->image_mime ?: 'image/jpeg');
-            $result = $gemini->proofreadImageBytes($bytes, $mimeType);
+            $provider = strtolower(trim((string) config('services.ai.provider', 'gemini')));
+            $result = match ($provider) {
+                'deepseek' => $deepseek->proofreadImageBytes($bytes, $mimeType),
+                'gemini' => $gemini->proofreadImageBytes($bytes, $mimeType),
+                default => throw new \RuntimeException("Nieznany AI_PROVIDER: {$provider} (dozwolone: gemini, deepseek)."),
+            };
 
-            DB::transaction(function () use ($aiJob, $page, $result, $quota) {
+            DB::transaction(function () use ($aiJob, $page, $result, $quota, $provider) {
                 $page->ai_text = $result['text'];
                 $page->ai_status = 'done';
                 $page->ai_meta = [
+                    'provider' => $provider,
                     'title' => $result['title'],
                     'subtitle' => $result['subtitle'],
                     'ocr_quality' => $result['ocr_quality'],
