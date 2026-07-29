@@ -1,4 +1,4 @@
-import { apiRequest } from '@/src/api/client';
+import { apiFormRequest, apiRequest } from '@/src/api/client';
 import type { AiBatch, AiQuota, AiUsageItem, ApiUser, AuthResponse, OcrQuota } from '@/src/api/types';
 
 export function register(input: {
@@ -108,14 +108,32 @@ export function analyzeBook(input: {
   pages: Array<{
     local_id: string;
     index: number;
-    ocr_text: string;
+    imageUri: string;
+    ocr_text?: string;
     printed_page_number?: string | null;
   }>;
 }): Promise<AiBatch> {
-  return apiRequest<AiBatch>('/api/ai/analyze', {
-    method: 'POST',
-    body: input,
+  const formData = new FormData();
+  formData.append('local_id', input.local_id);
+  formData.append('title', input.title);
+
+  input.pages.forEach((page, i) => {
+    formData.append(`pages[${i}][local_id]`, page.local_id);
+    formData.append(`pages[${i}][index]`, String(page.index));
+    if (page.printed_page_number != null && page.printed_page_number !== '') {
+      formData.append(`pages[${i}][printed_page_number]`, page.printed_page_number);
+    }
+    if (page.ocr_text != null && page.ocr_text !== '') {
+      formData.append(`pages[${i}][ocr_text]`, page.ocr_text);
+    }
+    formData.append(`pages[${i}][image]`, {
+      uri: page.imageUri,
+      name: `${page.local_id}.jpg`,
+      type: 'image/jpeg',
+    } as unknown as Blob);
   });
+
+  return apiFormRequest<AiBatch>('/api/ai/analyze', formData);
 }
 
 export function fetchAiBatch(id: number): Promise<AiBatch> {

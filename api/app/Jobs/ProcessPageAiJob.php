@@ -8,6 +8,7 @@ use App\Services\GeminiService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 class ProcessPageAiJob implements ShouldQueue
@@ -43,7 +44,13 @@ class ProcessPageAiJob implements ShouldQueue
         $page->save();
 
         try {
-            $result = $gemini->proofread($page->ocr_text);
+            if (! $page->image_path || ! Storage::disk('local')->exists($page->image_path)) {
+                throw new \RuntimeException('Brak zdjęcia strony do analizy AI.');
+            }
+
+            $absolutePath = Storage::disk('local')->path($page->image_path);
+            $mimeType = $this->guessMimeType($page->image_path);
+            $result = $gemini->proofreadImage($absolutePath, $mimeType);
 
             DB::transaction(function () use ($aiJob, $page, $result, $quota) {
                 $page->ai_text = $result['text'];
@@ -78,6 +85,9 @@ class ProcessPageAiJob implements ShouldQueue
         } catch (Throwable $e) {
             $this->failJob($aiJob, $e->getMessage(), $quota);
             throw $e;
+        } finally {
+            $page->refresh();
+            $page->clearStoredImage();
         }
     }
 
@@ -85,6 +95,8 @@ class ProcessPageAiJob implements ShouldQueue
     {
         $aiJob = AiJob::query()->with(['page', 'batch.user'])->find($this->aiJobId);
         if (! $aiJob || in_array($aiJob->status, ['done', 'failed'], true)) {
+            $aiJob?->page?->clearStoredImage();
+
             return;
         }
 
@@ -93,6 +105,8 @@ class ProcessPageAiJob implements ShouldQueue
             $exception?->getMessage() ?? 'Korekta AI nie powiodła się.',
             app(AiQuotaService::class)
         );
+
+        $aiJob->page?->clearStoredImage();
     }
 
     private function failJob(AiJob $aiJob, string $message, AiQuotaService $quota): void
@@ -123,5 +137,18 @@ class ProcessPageAiJob implements ShouldQueue
             $batch->save();
             $batch->refreshStatus();
         });
+    }
+
+    private function guessMimeType(string $path): string
+    {
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+
+        return match ($ext) {
+            'png' => 'image/png',
+            'webp' => 'image/webp',
+            'gif' => 'image/gif',
+            'heic', 'heif' => 'image/heic',
+            default => 'image/jpeg',
+        };
     }
 }

@@ -12,7 +12,9 @@ use App\Models\User;
 use App\Services\AiQuotaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 
 class AiController extends Controller
@@ -73,8 +75,9 @@ class AiController extends Controller
             'pages' => ['required', 'array', 'min:1'],
             'pages.*.local_id' => ['required', 'string', 'max:64'],
             'pages.*.index' => ['required', 'integer', 'min:1'],
-            'pages.*.ocr_text' => ['required', 'string'],
+            'pages.*.image' => ['required', 'file', 'image', 'max:15360'],
             'pages.*.printed_page_number' => ['nullable', 'string', 'max:64'],
+            'pages.*.ocr_text' => ['nullable', 'string'],
         ]);
 
         $pageCount = count($data['pages']);
@@ -85,8 +88,10 @@ class AiController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
+        $storedPaths = [];
+
         try {
-            [$batch, $jobIds] = DB::transaction(function () use ($user, $data, $quota, $pageCount) {
+            [$batch, $jobIds] = DB::transaction(function () use ($user, $data, $quota, $pageCount, $request, &$storedPaths) {
                 $quota->reserve($user, $pageCount);
 
                 $book = Book::updateOrCreate(
@@ -110,7 +115,28 @@ class AiController extends Controller
 
                 $jobIds = [];
 
-                foreach ($data['pages'] as $pageData) {
+                foreach ($data['pages'] as $i => $pageData) {
+                    /** @var UploadedFile|null $image */
+                    $image = $request->file("pages.{$i}.image");
+                    if (! $image) {
+                        throw new RuntimeException('Brak zdjęcia strony.');
+                    }
+
+                    $existing = Page::query()
+                        ->where('book_id', $book->id)
+                        ->where('local_id', $pageData['local_id'])
+                        ->first();
+
+                    if ($existing?->image_path) {
+                        Storage::disk('local')->delete($existing->image_path);
+                    }
+
+                    $storedPath = $image->store(
+                        "ai-pages/{$user->id}/{$book->id}",
+                        'local'
+                    );
+                    $storedPaths[] = $storedPath;
+
                     $page = Page::updateOrCreate(
                         [
                             'book_id' => $book->id,
@@ -118,7 +144,8 @@ class AiController extends Controller
                         ],
                         [
                             'index' => $pageData['index'],
-                            'ocr_text' => $pageData['ocr_text'],
+                            'ocr_text' => (string) ($pageData['ocr_text'] ?? ''),
+                            'image_path' => $storedPath,
                             'printed_page_number' => $pageData['printed_page_number'] ?? null,
                             'ai_status' => 'pending',
                             'ai_text' => null,
@@ -139,7 +166,17 @@ class AiController extends Controller
                 return [$batch, $jobIds];
             });
         } catch (RuntimeException $e) {
+            foreach ($storedPaths as $path) {
+                Storage::disk('local')->delete($path);
+            }
+
             return response()->json(['message' => $e->getMessage()], 422);
+        } catch (\Throwable $e) {
+            foreach ($storedPaths as $path) {
+                Storage::disk('local')->delete($path);
+            }
+
+            throw $e;
         }
 
         foreach ($jobIds as $jobId) {

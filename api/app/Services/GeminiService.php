@@ -13,25 +13,25 @@ class GeminiService
     public const TIMEOUT_SECONDS = 120;
 
     public const SYSTEM_PROMPT = <<<'PROMPT'
-Jesteś profesjonalnym korektorem tekstu polskiego. Poniższy tekst pochodzi ze skanu OCR (zdjęcie strony książki) i zawiera błędy typowe dla OCR: literówki, brak polskich znaków (ąęćłńóśźż), rozbite lub sklejone słowa, błędną interpunkcję, przypadkowe znaki, złą kapitalizację, a także wyrazy przeniesione do nowej linii z dywizem (łamanie wyrazów w książce).
+Jesteś profesjonalnym korektorem i transkrybentem tekstu polskiego. Dostajesz ZDJĘCIE strony książki (skan / fotografia). Masz odczytać tekst ze zdjęcia i zwrócić czystą, poprawną wersję.
 
-TWOJE ZADANIE — KOREKTA:
-1. Popraw wyłącznie błędy OCR, literówki, interpunkcję, ortografię i oczywistą gramatykę.
-2. BEZWZGLĘDNIE NIE SKRACAJ, NIE STRESZCZAJ ANI NIE POMIJAJ ŻADNEGO ZDANIA, AKAPITU ANI FRAGMENTU.
-3. Nie dodawaj treści, której nie ma w oryginale. Nie „ulepszaj” stylu literackiego.
-4. Zachowaj oryginalne znaczenie, styl, rejestr językowy i podział na akapity.
-5. OBOWIĄZKOWO scalaj wyrazy ucięte / przeniesione do nowej linii (łamanie wyrazów w druku):
+TWOJE ZADANIE — ODCZYT I KOREKTA:
+1. Odczytaj starannie CAŁY tekst widoczny na stronie (treść główna, nagłówki). Nie pomijaj fragmentów.
+2. Popraw oczywiste błędy wynikające z nieostrości / skanu: literówki, brakujące polskie znaki (ąęćłńóśźż), rozbite lub sklejone słowa, błędną interpunkcję, złą kapitalizację.
+3. BEZWZGLĘDNIE NIE SKRACAJ, NIE STRESZCZAJ ANI NIE POMIJAJ ŻADNEGO ZDANIA, AKAPITU ANI FRAGMENTU.
+4. Nie dodawaj treści, której nie ma na stronie. Nie „ulepszaj” stylu literackiego.
+5. Zachowaj oryginalne znaczenie, styl, rejestr językowy i podział na akapity.
+6. Scalaj wyrazy ucięte / przeniesione do nowej linii (łamanie wyrazów w druku):
    - Usuń dywiz na końcu wiersza i sklej obie części w jedno słowo.
-   - Przykłady: „rozcią-\ngnięte” → „rozciągnięte”; „książ-\nka” → „książka”; „nie-\nzależnie” → „niezależnie”; „po-\nwtórnie” → „powtórnie”.
-   - Dotyczy też wariantów ze spacją po dywizie (np. „rozcią- gnięte”).
-   - Nie zostawiaj dywizu przeniesienia w środku słowa. Prawdziwe łączniki (np. „biało-czerwony”) zostaw bez zmian, gdy to nie jest łamanie wiersza.
-6. Zachowaj sensowny podział akapitów; scalaj tylko słowa rozbite przez OCR / łamanie wiersza.
+   - Przykłady: „rozcią- / gnięte” → „rozciągnięte”; „książ-ka” → „książka”.
+   - Prawdziwe łączniki (np. „biało-czerwony”) zostaw bez zmian.
 7. Jeśli fragment jest nieczytelny, zostaw najbliższą sensowną rekonstrukcję — nie wymyślaj zdań od zera.
+8. Ignoruj elementy poza treścią (np. brud, cienie, palce, krawędź stołu) — nie opisuj ich.
 
 TWOJE ZADANIE — ANALIZA (do pól JSON):
-8. Wykryj tytuł strony / rozdziału (title) oraz podtytuł (subtitle), jeśli występują jako nagłówki — nie myl z pierwszym zdaniem akapitu.
-9. Oceń jakość OCR przed korektą (ocr_quality) oraz spójność / czytelność tekstu po Twojej korekcie (coherence) w skali 0.00–1.00 (dwa miejsca po przecinku).
-10. Wykryj numer strony wydrukowany na marginesie (page_number). Jeśli go wykryjesz:
+9. Wykryj tytuł strony / rozdziału (title) oraz podtytuł (subtitle), jeśli występują jako nagłówki — nie myl z pierwszym zdaniem akapitu.
+10. Oceń jakość skanu / czytelność zdjęcia (ocr_quality) oraz spójność / czytelność tekstu po Twojej korekcie (coherence) w skali 0.00–1.00 (dwa miejsca po przecinku).
+11. Wykryj numer strony wydrukowany na marginesie (page_number). Jeśli go wykryjesz:
     - wpisz go w pole page_number,
     - USUŃ go z corrected_text (nie zostawiaj samotnego numeru na początku/końcu).
     Jeśli nie wykryjesz — page_number = null.
@@ -50,16 +50,20 @@ PROMPT;
      *   page_number: string|null
      * }
      */
-    public function proofread(string $ocrText): array
+    public function proofreadImage(string $absolutePath, string $mimeType = 'image/jpeg'): array
     {
         $apiKey = trim((string) config('services.gemini.key'));
         if ($apiKey === '') {
             throw new RuntimeException('Brak klucza GEMINI_API_KEY na serwerze.');
         }
 
-        $trimmed = trim($ocrText);
-        if ($trimmed === '') {
-            throw new RuntimeException('Brak tekstu OCR do korekty.');
+        if (! is_readable($absolutePath)) {
+            throw new RuntimeException('Brak zdjęcia strony do analizy AI.');
+        }
+
+        $bytes = file_get_contents($absolutePath);
+        if ($bytes === false || $bytes === '') {
+            throw new RuntimeException('Nie udało się odczytać zdjęcia strony.');
         }
 
         $endpoint = sprintf('https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent', self::MODEL);
@@ -73,7 +77,15 @@ PROMPT;
                 'contents' => [
                     [
                         'role' => 'user',
-                        'parts' => [['text' => "Tekst OCR do korekty i analizy:\n\n{$trimmed}"]],
+                        'parts' => [
+                            ['text' => 'Odczytaj i popraw tekst ze zdjęcia strony książki. Zwróć JSON zgodnie ze schematem.'],
+                            [
+                                'inline_data' => [
+                                    'mime_type' => $mimeType,
+                                    'data' => base64_encode($bytes),
+                                ],
+                            ],
+                        ],
                     ],
                 ],
                 'generationConfig' => [
@@ -107,7 +119,7 @@ PROMPT;
                             ],
                             'ocr_quality' => [
                                 'type' => 'NUMBER',
-                                'description' => 'Ocena jakości OCR przed korektą, 0.00–1.00.',
+                                'description' => 'Ocena jakości skanu / czytelności zdjęcia, 0.00–1.00.',
                             ],
                             'coherence' => [
                                 'type' => 'NUMBER',

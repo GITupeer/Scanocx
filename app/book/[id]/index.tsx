@@ -15,7 +15,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { isApiConfigured } from '@/src/ai/config';
-import { getDisplayText, needsAiRewrite } from '@/src/ai/displayText';
+import { getDisplayText, needsAiRewrite, needsManualReview } from '@/src/ai/displayText';
 import {
   cancelAiForBook,
   cancelAiForPage,
@@ -25,7 +25,7 @@ import {
   useAiQueue,
 } from '@/src/ai/queue';
 import { useAuth } from '@/src/auth/AuthProvider';
-import type { Book, BookPage } from '@/src/domain/types';
+import type { AiAnalysis, Book, BookPage } from '@/src/domain/types';
 import {
   cancelOcrForBook,
   cancelOcrForPage,
@@ -96,12 +96,18 @@ const GRID_IMAGE_HEIGHT = Math.round(GRID_ITEM_WIDTH * (4 / 3));
 const LIST_THUMB = 72;
 
 type ViewMode = 'cards' | 'grid' | 'list';
+type PageFilter = 'all' | 'manual';
 
 const VIEW_MODES = [
   { id: 'cards', label: 'Obecny' },
   { id: 'grid', label: 'Grid' },
   { id: 'list', label: 'Lista' },
 ] as const satisfies readonly { id: ViewMode; label: string }[];
+
+const PAGE_FILTERS = [
+  { id: 'all', label: 'Wszystkie' },
+  { id: 'manual', label: 'Niska jakość skanu' },
+] as const satisfies readonly { id: PageFilter; label: string }[];
 
 function ocrOverlayCopy(page: BookPage): string {
   if (page.ocrStatus === 'pending') return 'Odczytywanie tekstu…';
@@ -163,7 +169,9 @@ export default function BookDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [showOcr, setShowOcr] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
+  const [pageFilter, setPageFilter] = useState<PageFilter>('all');
   const [menuPage, setMenuPage] = useState<BookPage | null>(null);
+  const [analysisTarget, setAnalysisTarget] = useState<BookPage | null>(null);
   const [bookMenu, setBookMenu] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -270,6 +278,22 @@ export default function BookDetailScreen() {
       return b.index - a.index;
     });
   }, [book]);
+
+  const manualReviewCount = useMemo(
+    () => pagesNewestFirst.filter(needsManualReview).length,
+    [pagesNewestFirst]
+  );
+
+  const visiblePages = useMemo(() => {
+    if (pageFilter !== 'manual') return pagesNewestFirst;
+    return pagesNewestFirst.filter(needsManualReview);
+  }, [pageFilter, pagesNewestFirst]);
+
+  useEffect(() => {
+    if (pageFilter === 'manual' && manualReviewCount === 0) {
+      setPageFilter('all');
+    }
+  }, [manualReviewCount, pageFilter]);
 
   const doneCount = useMemo(
     () => (book ? book.pages.filter((page) => page.ocrStatus === 'done').length : 0),
@@ -567,6 +591,9 @@ export default function BookDetailScreen() {
             {item.printedPageNumber ? (
               <Text style={styles.pageSubtitle}>w książce: {item.printedPageNumber}</Text>
             ) : null}
+            {needsManualReview(item) ? (
+              <Text style={styles.reviewFlag}>Niska jakość skanu</Text>
+            ) : null}
           </View>
 
           <View style={styles.pageBadges}>
@@ -630,6 +657,11 @@ export default function BookDetailScreen() {
           <Text style={styles.gridTitle} numberOfLines={1}>
             Strona {item.index}
           </Text>
+          {needsManualReview(item) ? (
+            <Text style={styles.reviewFlag} numberOfLines={1}>
+              Niska jakość skanu
+            </Text>
+          ) : null}
           <View style={styles.gridBadges}>
             <OcrStatusBadge status={item.ocrStatus} />
             <AiStatusBadge status={item.aiStatus} />
@@ -651,6 +683,9 @@ export default function BookDetailScreen() {
           <Text style={styles.pageTitle}>Strona {item.index}</Text>
           {item.printedPageNumber ? (
             <Text style={styles.pageSubtitle}>w książce: {item.printedPageNumber}</Text>
+          ) : null}
+          {needsManualReview(item) ? (
+            <Text style={styles.reviewFlag}>Niska jakość skanu</Text>
           ) : null}
         </View>
         <View style={styles.pageBadges}>
@@ -680,7 +715,11 @@ export default function BookDetailScreen() {
     <View style={styles.root}>
       <AppBar
         title={book.title}
-        subtitle={`${pagesLabel(book.pages.length)} · rozpoznane ${doneCount}`}
+        subtitle={
+          pageFilter === 'manual'
+            ? `Niska jakość skanu: ${manualReviewCount}`
+            : `${pagesLabel(book.pages.length)} · rozpoznane ${doneCount}`
+        }
       />
 
       {hasPages ? (
@@ -692,14 +731,27 @@ export default function BookDetailScreen() {
         />
       ) : null}
 
+      {hasPages && manualReviewCount > 0 ? (
+        <SegmentedControl
+          options={PAGE_FILTERS.map((option) =>
+            option.id === 'manual'
+              ? { ...option, label: `Niska jakość skanu (${manualReviewCount})` }
+              : option
+          )}
+          value={pageFilter}
+          onChange={setPageFilter}
+          style={styles.filterBar}
+        />
+      ) : null}
+
       <FlatList
-        key={viewMode}
-        data={pagesNewestFirst}
+        key={`${viewMode}:${pageFilter}`}
+        data={visiblePages}
         keyExtractor={(item) => item.id}
         renderItem={renderPage}
         numColumns={viewMode === 'grid' ? GRID_COLUMNS : 1}
         columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
-        extraData={`${showOcr}:${viewMode}`}
+        extraData={`${showOcr}:${viewMode}:${pageFilter}`}
         showsVerticalScrollIndicator={false}
         removeClippedSubviews={false}
         windowSize={viewMode === 'cards' ? 5 : 9}
@@ -730,19 +782,40 @@ export default function BookDetailScreen() {
                 disabled={actionBusy}
               />
             ) : null}
+            {pageFilter === 'manual' ? (
+              <View style={styles.filterHint}>
+                <Icon name="alert" size={16} color={colors.warning} />
+                <Text style={styles.filterHintText}>
+                  Jakość OCR poniżej 0,50 lub spójność po AI poniżej 0,60 — przejrzyj tekst ręcznie.
+                </Text>
+              </View>
+            ) : null}
           </View>
         }
         ListEmptyComponent={
-          <EmptyState
-            icon="camera"
-            title="Brak stron"
-            body="Zrób zdjęcie pierwszej strony — kadrowanie i odczyt tekstu zrobią się same."
-            action={{
-              label: 'Skanuj stronę',
-              icon: 'camera',
-              onPress: () => router.push(`/book/${book.id}/capture`),
-            }}
-          />
+          pageFilter === 'manual' ? (
+            <EmptyState
+              icon="checkCircle"
+              title="Brak stron o niskiej jakości"
+              body="Żadna strona nie ma słabej jakości OCR ani niskiej spójności po korekcie."
+              action={{
+                label: 'Pokaż wszystkie',
+                icon: 'notes',
+                onPress: () => setPageFilter('all'),
+              }}
+            />
+          ) : (
+            <EmptyState
+              icon="camera"
+              title="Brak stron"
+              body="Zrób zdjęcie pierwszej strony — kadrowanie i odczyt tekstu zrobią się same."
+              action={{
+                label: 'Skanuj stronę',
+                icon: 'camera',
+                onPress: () => router.push(`/book/${book.id}/capture`),
+              }}
+            />
+          )
         }
         ItemSeparatorComponent={
           viewMode === 'grid' ? undefined : () => <View style={{ height: space.lg }} />
@@ -791,6 +864,24 @@ export default function BookDetailScreen() {
         eyebrow="Strona"
         title={menuPage ? `Strona ${menuPage.index}` : ''}>
         <SheetGroup>
+          <Row
+            icon="stats"
+            label="Analiza AI"
+            detail={
+              menuPage?.aiAnalysis
+                ? 'Tytuł, jakość OCR i numer strony'
+                : menuPage?.aiStatus === 'done'
+                  ? 'Brak metadanych — uruchom korektę ponownie'
+                  : 'Dostępna po udanej korekcie AI'
+            }
+            disabled={!menuPage?.aiAnalysis}
+            onPress={() => {
+              const page = menuPage;
+              closePageMenu();
+              if (page?.aiAnalysis) setAnalysisTarget(page);
+            }}
+          />
+          <SheetDivider />
           <Row icon="rotate" label="Obróć 180°" detail="Obraca zdjęcie i czyta je ponownie" onPress={onRotate180} />
           <SheetDivider />
           <Row
@@ -963,7 +1054,83 @@ export default function BookDetailScreen() {
         onCancel={() => setDeletePageTarget(null)}
       />
 
+      <AiAnalysisDialog
+        visible={analysisTarget != null}
+        analysis={analysisTarget?.aiAnalysis ?? null}
+        pageIndex={analysisTarget?.index}
+        onClose={() => setAnalysisTarget(null)}
+      />
+
       <BusyOverlay visible={actionBusy} label="Pracuję…" />
+    </View>
+  );
+}
+
+function formatScore(value: number): string {
+  return value.toFixed(2);
+}
+
+function AiAnalysisDialog({
+  visible,
+  analysis,
+  pageIndex,
+  onClose,
+}: {
+  visible: boolean;
+  analysis: AiAnalysis | null;
+  pageIndex?: number;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog
+      visible={visible}
+      onClose={onClose}
+      icon="stats"
+      title={pageIndex != null ? `Analiza AI · strona ${pageIndex}` : 'Analiza AI'}
+      body="Wynik ostatniej korekty Gemini dla tej strony."
+      actions={<Button label="Zamknij" variant="outline" onPress={onClose} style={styles.dialogFlex} />}>
+      {analysis ? (
+        <View style={styles.analysisList}>
+          <AnalysisRow
+            label="Tytuł"
+            value={analysis.title ?? 'Nie wykryto'}
+            muted={!analysis.title}
+          />
+          <AnalysisRow
+            label="Podtytuł"
+            value={analysis.subtitle ?? 'Nie wykryto'}
+            muted={!analysis.subtitle}
+          />
+          <AnalysisRow label="Jakość OCR" value={formatScore(analysis.ocrQuality)} />
+          <AnalysisRow label="Spójność po korekcie" value={formatScore(analysis.coherence)} />
+          <AnalysisRow
+            label="Numer strony"
+            value={
+              analysis.pageNumber
+                ? `${analysis.pageNumber} (usunięty z tekstu)`
+                : 'Nie wykryto'
+            }
+            muted={!analysis.pageNumber}
+          />
+        </View>
+      ) : null}
+    </Dialog>
+  );
+}
+
+function AnalysisRow({
+  label,
+  value,
+  muted,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+}) {
+  return (
+    <View style={styles.analysisRow}>
+      <Text style={styles.analysisLabel}>{label}</Text>
+      <Text style={[styles.analysisValue, muted && styles.analysisMuted]}>{value}</Text>
     </View>
   );
 }
@@ -1023,6 +1190,34 @@ const styles = StyleSheet.create({
   viewModeBar: {
     marginHorizontal: space.lg,
     marginBottom: space.md,
+  },
+  filterBar: {
+    marginHorizontal: space.lg,
+    marginBottom: space.md,
+    marginTop: -space.sm,
+  },
+  filterHint: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+    padding: space.md,
+    borderRadius: radius.lg,
+    backgroundColor: colors.warningSoft,
+    borderWidth: 1,
+    borderColor: colors.warning,
+  },
+  filterHintText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: colors.inkSoft,
+  },
+  reviewFlag: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.warning,
   },
   pageCard: {
     backgroundColor: colors.surface,
@@ -1301,5 +1496,29 @@ const styles = StyleSheet.create({
   },
   dialogFlex: {
     flex: 1,
+  },
+  analysisList: {
+    gap: space.md,
+    paddingVertical: space.xs,
+  },
+  analysisRow: {
+    gap: 4,
+  },
+  analysisLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  analysisValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.ink,
+    lineHeight: 21,
+  },
+  analysisMuted: {
+    color: colors.faint,
+    fontWeight: '500',
   },
 });

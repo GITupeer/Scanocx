@@ -552,7 +552,7 @@ async function startCloudAnalysis(
   const book = await getBook(bookId);
   let pages = book.pages
     .filter((page) => (pageIds ? pageIds.includes(page.id) : needsAiRewrite(page)))
-    .filter((page) => page.ocrText.trim().length > 0)
+    .filter((page) => Boolean(page.imageUri?.trim()))
     .sort((a, b) => a.index - b.index);
 
   if (pages.length === 0) {
@@ -588,7 +588,7 @@ async function startCloudAnalysis(
   currentPageIds = pages.map((p) => p.id);
   appliedDone = new Set();
   phase = 'preparing';
-  phaseDetail = 'Wysyłam strony do chmury…';
+  phaseDetail = 'Wysyłam zdjęcia stron do chmury…';
   startTicker();
   publish();
 
@@ -605,7 +605,7 @@ async function startCloudAnalysis(
       pages: pages.map((page) => ({
         local_id: page.id,
         index: page.index,
-        ocr_text: page.ocrText,
+        imageUri: page.imageUri,
         printed_page_number: page.printedPageNumber,
       })),
     });
