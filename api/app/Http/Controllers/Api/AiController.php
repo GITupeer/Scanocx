@@ -12,9 +12,9 @@ use App\Models\User;
 use App\Services\AiQuotaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use RuntimeException;
 
 class AiController extends Controller
@@ -75,7 +75,8 @@ class AiController extends Controller
             'pages' => ['required', 'array', 'min:1'],
             'pages.*.local_id' => ['required', 'string', 'max:64'],
             'pages.*.index' => ['required', 'integer', 'min:1'],
-            'pages.*.image' => ['required', 'file', 'image', 'max:15360'],
+            'pages.*.image_base64' => ['required', 'string'],
+            'pages.*.mime_type' => ['nullable', 'string', 'in:image/jpeg,image/png,image/webp'],
             'pages.*.printed_page_number' => ['nullable', 'string', 'max:64'],
             'pages.*.ocr_text' => ['nullable', 'string'],
         ]);
@@ -91,7 +92,7 @@ class AiController extends Controller
         $storedPaths = [];
 
         try {
-            [$batch, $jobIds] = DB::transaction(function () use ($user, $data, $quota, $pageCount, $request, &$storedPaths) {
+            [$batch, $jobIds] = DB::transaction(function () use ($user, $data, $quota, $pageCount, &$storedPaths) {
                 $quota->reserve($user, $pageCount);
 
                 $book = Book::updateOrCreate(
@@ -115,12 +116,9 @@ class AiController extends Controller
 
                 $jobIds = [];
 
-                foreach ($data['pages'] as $i => $pageData) {
-                    /** @var UploadedFile|null $image */
-                    $image = $request->file("pages.{$i}.image");
-                    if (! $image) {
-                        throw new RuntimeException('Brak zdjęcia strony.');
-                    }
+                foreach ($data['pages'] as $pageData) {
+                    $binary = $this->decodeImageBase64((string) $pageData['image_base64']);
+                    $ext = $this->extensionForMime((string) ($pageData['mime_type'] ?? 'image/jpeg'));
 
                     $existing = Page::query()
                         ->where('book_id', $book->id)
@@ -131,10 +129,8 @@ class AiController extends Controller
                         Storage::disk('local')->delete($existing->image_path);
                     }
 
-                    $storedPath = $image->store(
-                        "ai-pages/{$user->id}/{$book->id}",
-                        'local'
-                    );
+                    $storedPath = "ai-pages/{$user->id}/{$book->id}/".Str::uuid()->toString().".{$ext}";
+                    Storage::disk('local')->put($storedPath, $binary);
                     $storedPaths[] = $storedPath;
 
                     $page = Page::updateOrCreate(
@@ -199,6 +195,41 @@ class AiController extends Controller
             ->findOrFail($id);
 
         return response()->json($this->serializeBatch($batch));
+    }
+
+    private function decodeImageBase64(string $raw): string
+    {
+        $cleaned = trim($raw);
+        if (str_starts_with($cleaned, 'data:')) {
+            $parts = explode(',', $cleaned, 2);
+            $cleaned = $parts[1] ?? '';
+        }
+
+        $cleaned = preg_replace('/\s+/', '', $cleaned) ?? '';
+        if ($cleaned === '') {
+            throw new RuntimeException('Puste zdjęcie strony.');
+        }
+
+        // ~15 MB binarne ≈ ~20 MB base64
+        if (strlen($cleaned) > 20 * 1024 * 1024) {
+            throw new RuntimeException('Zdjęcie strony jest zbyt duże.');
+        }
+
+        $binary = base64_decode($cleaned, true);
+        if ($binary === false || $binary === '') {
+            throw new RuntimeException('Niepoprawne zdjęcie strony (base64).');
+        }
+
+        return $binary;
+    }
+
+    private function extensionForMime(string $mime): string
+    {
+        return match ($mime) {
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+            default => 'jpg',
+        };
     }
 
     /**

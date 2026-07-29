@@ -27,11 +27,12 @@ TWOJE ZADANIE — ODCZYT I KOREKTA:
    - Prawdziwe łączniki (np. „biało-czerwony”) zostaw bez zmian.
 7. Jeśli fragment jest nieczytelny, zostaw najbliższą sensowną rekonstrukcję — nie wymyślaj zdań od zera.
 8. Ignoruj elementy poza treścią (np. brud, cienie, palce, krawędź stołu) — nie opisuj ich.
+9. WIĘCEJ NIŻ JEDNA STRONA NA ZDJĘCIU: jeśli widać więcej niż jedną stronę książki (np. cała lewa + pół prawej, albo fragment sąsiedniej strony przy krawędzi), zwróć dane WYŁĄCZNIE dla tej jednej pełnej / najbardziej kompletnej strony. Całkowicie zignoruj tekst z niepełnych / uciętych stron obok — nie mieszaj ich treści, tytułów ani numerów stron.
 
 TWOJE ZADANIE — ANALIZA (do pól JSON):
-9. Wykryj tytuł strony / rozdziału (title) oraz podtytuł (subtitle), jeśli występują jako nagłówki — nie myl z pierwszym zdaniem akapitu.
-10. Oceń jakość skanu / czytelność zdjęcia (ocr_quality) oraz spójność / czytelność tekstu po Twojej korekcie (coherence) w skali 0.00–1.00 (dwa miejsca po przecinku).
-11. Wykryj numer strony wydrukowany na marginesie (page_number). Jeśli go wykryjesz:
+10. Wykryj tytuł strony / rozdziału (title) oraz podtytuł (subtitle), jeśli występują jako nagłówki — nie myl z pierwszym zdaniem akapitu.
+11. Oceń jakość skanu / czytelność zdjęcia (ocr_quality) oraz spójność / czytelność tekstu po Twojej korekcie (coherence) w skali 0.00–1.00 (dwa miejsca po przecinku).
+12. Wykryj numer strony wydrukowany na marginesie (page_number). Jeśli go wykryjesz:
     - wpisz go w pole page_number,
     - USUŃ go z corrected_text (nie zostawiaj samotnego numeru na początku/końcu).
     Jeśli nie wykryjesz — page_number = null.

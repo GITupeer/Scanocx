@@ -1,5 +1,6 @@
-import { apiFormRequest, apiRequest } from '@/src/api/client';
+import { apiRequest } from '@/src/api/client';
 import type { AiBatch, AiQuota, AiUsageItem, ApiUser, AuthResponse, OcrQuota } from '@/src/api/types';
+import * as FileSystem from 'expo-file-system/legacy';
 
 export function register(input: {
   name: string;
@@ -102,7 +103,7 @@ export function releaseOcrQuota(count = 1): Promise<OcrQuota> {
   });
 }
 
-export function analyzeBook(input: {
+export async function analyzeBook(input: {
   local_id: string;
   title: string;
   pages: Array<{
@@ -113,27 +114,30 @@ export function analyzeBook(input: {
     printed_page_number?: string | null;
   }>;
 }): Promise<AiBatch> {
-  const formData = new FormData();
-  formData.append('local_id', input.local_id);
-  formData.append('title', input.title);
+  const pages = await Promise.all(
+    input.pages.map(async (page) => {
+      const image_base64 = await FileSystem.readAsStringAsync(page.imageUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      return {
+        local_id: page.local_id,
+        index: page.index,
+        image_base64,
+        mime_type: 'image/jpeg' as const,
+        printed_page_number: page.printed_page_number ?? null,
+        ocr_text: page.ocr_text,
+      };
+    })
+  );
 
-  input.pages.forEach((page, i) => {
-    formData.append(`pages[${i}][local_id]`, page.local_id);
-    formData.append(`pages[${i}][index]`, String(page.index));
-    if (page.printed_page_number != null && page.printed_page_number !== '') {
-      formData.append(`pages[${i}][printed_page_number]`, page.printed_page_number);
-    }
-    if (page.ocr_text != null && page.ocr_text !== '') {
-      formData.append(`pages[${i}][ocr_text]`, page.ocr_text);
-    }
-    formData.append(`pages[${i}][image]`, {
-      uri: page.imageUri,
-      name: `${page.local_id}.jpg`,
-      type: 'image/jpeg',
-    } as unknown as Blob);
+  return apiRequest<AiBatch>('/api/ai/analyze', {
+    method: 'POST',
+    body: {
+      local_id: input.local_id,
+      title: input.title,
+      pages,
+    },
   });
-
-  return apiFormRequest<AiBatch>('/api/ai/analyze', formData);
 }
 
 export function fetchAiBatch(id: number): Promise<AiBatch> {
