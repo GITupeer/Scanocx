@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { isApiConfigured } from '@/src/ai/config';
+import { estimateGeminiRequestCost, formatUsd } from '@/src/ai/pricing';
 import {
   cancelAiForPage,
   runPageAiExclusive,
@@ -340,6 +341,13 @@ export default function PageDetailScreen() {
 
   const position = currentPos.index >= 0 ? currentPos.index + 1 : 0;
   const editingAi = textTab === 'ai';
+  const aiCost = page.aiAnalysis
+    ? estimateGeminiRequestCost({
+        promptTokens: page.aiAnalysis.promptTokens,
+        outputTokens: page.aiAnalysis.outputTokens,
+        totalTokens: page.aiAnalysis.totalTokens,
+      })
+    : null;
 
   return (
     <View style={styles.root}>
@@ -404,21 +412,29 @@ export default function PageDetailScreen() {
             (page.aiAnalysis.promptTokens != null ||
               page.aiAnalysis.outputTokens != null ||
               page.aiAnalysis.totalTokens != null) ? (
-              <View style={styles.tokenRow}>
-                <Icon name="ai" size={14} color={colors.muted} />
-                <Text style={styles.tokenText}>
-                  Ostatnia korekta AI ·{' '}
-                  {page.aiAnalysis.promptTokens != null
-                    ? `${formatTokenCount(page.aiAnalysis.promptTokens)} in`
-                    : '— in'}
-                  {' · '}
-                  {page.aiAnalysis.outputTokens != null
-                    ? `${formatTokenCount(page.aiAnalysis.outputTokens)} out`
-                    : '— out'}
-                  {page.aiAnalysis.totalTokens != null
-                    ? ` · ${formatTokenCount(page.aiAnalysis.totalTokens)} łącznie`
-                    : ''}
-                </Text>
+              <View style={styles.usageBlock}>
+                <View style={styles.tokenRow}>
+                  <Icon name="ai" size={14} color={colors.muted} />
+                  <Text style={styles.tokenText}>
+                    Ostatnia korekta AI ·{' '}
+                    {page.aiAnalysis.promptTokens != null
+                      ? `${formatTokenCount(page.aiAnalysis.promptTokens)} in`
+                      : '— in'}
+                    {' · '}
+                    {page.aiAnalysis.outputTokens != null
+                      ? `${formatTokenCount(page.aiAnalysis.outputTokens)} out`
+                      : '— out'}
+                    {page.aiAnalysis.totalTokens != null
+                      ? ` · ${formatTokenCount(page.aiAnalysis.totalTokens)} łącznie`
+                      : ''}
+                  </Text>
+                </View>
+                {aiCost ? (
+                  <Text style={styles.costText}>
+                    Koszt · wejście {formatUsd(aiCost.inputUsd)} · wyjście{' '}
+                    {formatUsd(aiCost.outputUsd)} · łącznie {formatUsd(aiCost.totalUsd)}
+                  </Text>
+                ) : null}
               </View>
             ) : null}
 
@@ -791,6 +807,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: space.sm,
+  },
+  usageBlock: {
+    gap: 4,
     marginTop: -space.sm,
   },
   tokenText: {
@@ -799,6 +818,14 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontWeight: '600',
     color: colors.muted,
+    fontVariant: ['tabular-nums'],
+  },
+  costText: {
+    marginLeft: 14 + space.sm,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+    color: colors.faint,
     fontVariant: ['tabular-nums'],
   },
   tabRow: {

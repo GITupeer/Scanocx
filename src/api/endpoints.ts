@@ -1,6 +1,5 @@
 import { apiRequest } from '@/src/api/client';
 import type { AiBatch, AiQuota, AiUsageItem, ApiUser, AuthResponse, ExportQuota, OcrQuota } from '@/src/api/types';
-import { prepareImageForAiUpload } from '@/src/images/prepareForAi';
 import * as FileSystem from 'expo-file-system/legacy';
 
 export function register(input: {
@@ -140,11 +139,9 @@ export async function analyzeBook(
   }> = [];
 
   // Sekwencyjnie — mniej peaków pamięci i przewidywalny postęp X/Y.
-  // Skalowanie JPEG przed base64 — mniejszy upload i payload do Google.
   for (let i = 0; i < input.pages.length; i++) {
     const page = input.pages[i]!;
-    const aiUri = await prepareImageForAiUpload(page.imageUri);
-    const image_base64 = await FileSystem.readAsStringAsync(aiUri, {
+    const image_base64 = await FileSystem.readAsStringAsync(page.imageUri, {
       encoding: FileSystem.EncodingType.Base64,
     });
     pages.push({
