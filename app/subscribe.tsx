@@ -46,13 +46,13 @@ const FEATURES: Feature[] = [
   {
     icon: "scan",
     title: "OCR",
-    free: "30 odczytów / miesiąc",
+    free: "50 odczytów / miesiąc",
     pro: "Bez limitu",
   },
   {
     icon: "camera",
     title: "Zdjęcia stron",
-    free: "Bez limitu",
+    free: "50 / miesiąc",
     pro: "Bez limitu",
   },
   {

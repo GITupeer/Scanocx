@@ -108,6 +108,15 @@ export default function AdminUsersScreen() {
                     / miesiąc
                   </Text>
                 ) : null}
+                {user.photo_quota ? (
+                  <Text style={styles.quota}>
+                    Zdjęcia:{' '}
+                    {user.photo_quota.unlimited
+                      ? '∞'
+                      : `${user.photo_quota.remaining}/${user.photo_quota.limit}`}{' '}
+                    / miesiąc
+                  </Text>
+                ) : null}
               </View>
               <Divider />
               <View style={styles.actions}>

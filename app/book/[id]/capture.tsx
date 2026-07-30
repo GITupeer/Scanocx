@@ -25,6 +25,11 @@ import {
   OcrQuotaExceededError,
 } from '@/src/ocr/quota';
 import {
+  assertCanAddPhoto,
+  PhotoQuotaExceededError,
+  refreshPhotoQuota,
+} from '@/src/photos/quota';
+import {
   addPageFromCameraUri,
   replacePageFromCameraUri,
 } from '@/src/storage/books';
@@ -119,7 +124,8 @@ export default function CaptureScreen() {
   const isReplace = typeof replacePageId === 'string' && replacePageId.length > 0;
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { ready, isLoggedIn } = useAuth();
+  const { ready, isLoggedIn, user } = useAuth();
+  const isPro = user?.plan === 'pro';
   const [permission, requestPermission] = useCameraPermissions();
 
   const ocrHintAlertedRef = useRef(false);
@@ -219,7 +225,7 @@ export default function CaptureScreen() {
     }
     Alert.alert(
       'Limit OCR',
-      'Darmowy plan: 30 odczytów tekstu na miesiąc. Zdjęcia zapisujesz dalej bez limitu — OCR możesz uruchomić później (Pro = nielimitowane).'
+      'Darmowy plan: 50 odczytów tekstu na miesiąc. OCR możesz uruchomić później (Pro = nielimitowane).'
     );
   }, []);
 
@@ -348,7 +354,21 @@ export default function CaptureScreen() {
         return;
       }
 
+      try {
+        await assertCanAddPhoto(isPro);
+      } catch (error) {
+        patchStep('save', 'skipped', 'limit zdjęć');
+        if (error instanceof PhotoQuotaExceededError) {
+          Alert.alert('Limit zdjęć', error.message);
+        } else {
+          Alert.alert('Limit zdjęć', 'Nie udało się zapisać zdjęcia — sprawdź limit planu free.');
+        }
+        clearProgressSoon();
+        return;
+      }
+
       const { page } = await addPageFromCameraUri(id, saveUriPath);
+      void refreshPhotoQuota(isPro);
       setSessionCount((n) => n + 1);
       setProgress((prev) =>
         prev
@@ -380,7 +400,7 @@ export default function CaptureScreen() {
       }
       clearProgressSoon();
     },
-    [clearProgressSoon, id, isReplace, patchStep, replacePageId, router, tryOcr]
+    [clearProgressSoon, id, isPro, isReplace, patchStep, replacePageId, router, tryOcr]
   );
 
   const saveUri = useCallback(

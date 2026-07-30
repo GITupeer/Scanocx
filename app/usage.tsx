@@ -9,6 +9,11 @@ import { ApiError, type AiUsageItem } from '@/src/api/types';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { FREE_OCR_MONTHLY_LIMIT, refreshOcrQuota, useOcrQuota } from '@/src/ocr/quota';
 import {
+  FREE_PHOTO_MONTHLY_LIMIT,
+  refreshPhotoQuota,
+  usePhotoQuota,
+} from '@/src/photos/quota';
+import {
   AppBar,
   AuroraBackdrop,
   Badge,
@@ -82,6 +87,8 @@ export default function UsageScreen() {
   const insets = useSafeAreaInsets();
   const { user, ready, isLoggedIn, refresh } = useAuth();
   const ocrQuota = useOcrQuota();
+  const photoQuota = usePhotoQuota();
+  const isPro = user?.plan === 'pro';
 
   const [items, setItems] = useState<AiUsageItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,6 +109,7 @@ export default function UsageScreen() {
     try {
       await refresh();
       await refreshOcrQuota();
+      await refreshPhotoQuota(user?.plan === 'pro');
       const result = await api.fetchAiUsage();
       setItems(result.data);
     } catch (error) {
@@ -111,7 +119,7 @@ export default function UsageScreen() {
     } finally {
       setLoading(false);
     }
-  }, [ready, isLoggedIn, refresh, router]);
+  }, [ready, isLoggedIn, refresh, router, user?.plan]);
 
   useFocusEffect(
     useCallback(() => {
@@ -160,7 +168,7 @@ export default function UsageScreen() {
                 {ocrQuota.used} zużyte
                 {ocrQuota.reserved > 0 ? ` · ${ocrQuota.reserved} zarezerwowane` : ''}
                 {' · '}
-                zdjęcia bez limitu · limit odnawia się co miesiąc
+                limit odnawia się co miesiąc
               </Text>
               <ProgressBar
                 value={
@@ -174,6 +182,39 @@ export default function UsageScreen() {
             </>
           ) : (
             <Text style={styles.quotaHint}>OCR dostępne po zalogowaniu.</Text>
+          )}
+        </Card>
+
+        <Card style={styles.quotaCard}>
+          <View style={styles.quotaTop}>
+            <Text style={styles.quotaTitle}>Zdjęcia w tym miesiącu</Text>
+            <Badge
+              label={planLabel(user?.plan)}
+              tone={isPro ? 'success' : 'primary'}
+              icon={isPro ? 'bolt' : 'camera'}
+            />
+          </View>
+          {photoQuota.unlimited || isPro ? (
+            <Text style={styles.quotaValue}>Nielimitowane</Text>
+          ) : (
+            <>
+              <Text style={styles.quotaValue}>
+                {photoQuota.remaining ?? 0} z{' '}
+                {photoQuota.limit ?? FREE_PHOTO_MONTHLY_LIMIT} zdjęć
+              </Text>
+              <Text style={styles.quotaHint}>
+                {photoQuota.used} zużyte · limit odnawia się co miesiąc
+              </Text>
+              <ProgressBar
+                value={
+                  photoQuota.limit != null && photoQuota.limit > 0
+                    ? Math.max(0, Math.min(1, photoQuota.used / photoQuota.limit))
+                    : 0
+                }
+                height={6}
+                style={styles.quotaBar}
+              />
+            </>
           )}
         </Card>
 

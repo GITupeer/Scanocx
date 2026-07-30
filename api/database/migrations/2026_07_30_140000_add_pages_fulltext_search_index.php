@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Indeks FTS pod wyszukiwanie treści stron.
- * Produkcja = PostgreSQL. MySQL: FULLTEXT na ocr_text + ai_text.
+ * Produkcja = MySQL 8. PostgreSQL: GIN (dev/alternatywa).
  */
 return new class extends Migration
 {

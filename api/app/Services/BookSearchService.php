@@ -9,13 +9,13 @@ use Illuminate\Support\Str;
 /**
  * Wyszukiwanie treści stron użytkownika.
  *
- * Produkcja: PostgreSQL — full-text (ranking + headline), nie exact 1:1.
- * MySQL: FULLTEXT NATURAL LANGUAGE (jeśli dostępny) albo LIKE.
+ * Produkcja: MySQL 8 — FULLTEXT NATURAL LANGUAGE (+ LIKE fallback).
+ * PostgreSQL: full-text (ranking + headline) — środowisko alternatywne.
  * SQLite (testy): LIKE.
  *
- * Uwaga: to nadal wyszukiwanie leksykalne (słowa / frazy / ranking),
+ * Uwaga: to nadal wyszukiwanie leksykalne (słowa / ranking),
  * nie semantyczne embeddingi. Prawdziwy „kontekst znaczeniowy” wymagałby
- * modelu wektorowego (np. pgvector).
+ * modelu wektorowego.
  */
 class BookSearchService
 {
@@ -134,43 +134,41 @@ class BookSearchService
      */
     private function searchMysql(int $userId, string $query, int $limit): array
     {
-        // NATURAL LANGUAGE MODE: ranking trafności, nie wymaga dokładnej frazy 1:1.
-        // Boolean MODE (+słowo) jest bardziej „exact”. Semantyki nadal brak.
+        // NATURAL LANGUAGE MODE: ranking trafności (MySQL 8 / InnoDB FULLTEXT).
+        // Wymaga indeksu pages_ocr_ai_fulltext. Semantyki nadal brak — to ranking leksykalny.
+        // PDO/MySQL: nie wolno powtórzyć tego samego named param; LIMIT bindujemy jako int.
+        $limit = max(1, min(100, $limit));
+
         try {
-            $rows = DB::select(
-                <<<'SQL'
+            $sql = '
                 SELECT
                     pages.local_id AS page_local_id,
                     books.local_id AS book_local_id,
                     books.title AS book_title,
-                    pages.index AS page_index,
+                    pages.`index` AS page_index,
                     pages.printed_page_number,
                     CASE
-                        WHEN pages.ai_text IS NOT NULL AND TRIM(pages.ai_text) <> '' THEN 'ai'
-                        ELSE 'ocr'
+                        WHEN pages.ai_text IS NOT NULL AND TRIM(pages.ai_text) <> \'\' THEN \'ai\'
+                        ELSE \'ocr\'
                     END AS source,
                     SUBSTRING(
-                        COALESCE(NULLIF(TRIM(pages.ai_text), ''), pages.ocr_text, ''),
+                        COALESCE(NULLIF(TRIM(pages.ai_text), \'\'), pages.ocr_text, \'\'),
                         1,
                         180
                     ) AS snippet,
-                    MATCH(
-                        pages.ocr_text,
-                        pages.ai_text
-                    ) AGAINST (:query IN NATURAL LANGUAGE MODE) AS rank
+                    MATCH(pages.ocr_text, pages.ai_text) AGAINST (:query_rank IN NATURAL LANGUAGE MODE) AS rank
                 FROM pages
                 INNER JOIN books ON books.id = pages.book_id
                 WHERE books.user_id = :user_id
-                  AND MATCH(pages.ocr_text, pages.ai_text) AGAINST (:query IN NATURAL LANGUAGE MODE)
+                  AND MATCH(pages.ocr_text, pages.ai_text) AGAINST (:query_match IN NATURAL LANGUAGE MODE)
                 ORDER BY rank DESC, pages.updated_at DESC
-                LIMIT :limit
-                SQL,
-                [
-                    'user_id' => $userId,
-                    'query' => $query,
-                    'limit' => $limit,
-                ]
-            );
+                LIMIT '.$limit;
+
+            $rows = DB::select($sql, [
+                'user_id' => $userId,
+                'query_rank' => $query,
+                'query_match' => $query,
+            ]);
 
             if (count($rows) > 0) {
                 return $this->mapRows($rows);

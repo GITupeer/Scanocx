@@ -414,7 +414,7 @@ export default function BookDetailScreen() {
       if (slice.length === 0) {
         Alert.alert(
           'Limit OCR',
-          'Brak dostępnych odczytów w tym miesiącu. Zdjęcia możesz dalej robić — przejdź na Pro, aby mieć nielimitowane OCR.'
+          'Brak dostępnych odczytów w tym miesiącu. Przejdź na Pro, aby mieć nielimitowane OCR.'
         );
         return;
       }
@@ -1168,7 +1168,7 @@ export default function BookDetailScreen() {
             detail={
               menuPage?.ocrStatus === 'idle'
                 ? isLoggedIn
-                  ? 'Uruchom OCR dla tego zdjęcia (limit free: 30/mies.)'
+                  ? 'Uruchom OCR dla tego zdjęcia (limit free: 50/mies.)'
                   : 'Wymaga zalogowania'
                 : 'Odczytaj tekst ze zdjęcia od nowa'
             }

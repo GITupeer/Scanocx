@@ -7,8 +7,10 @@ use App\Models\Book;
 use App\Models\Page;
 use App\Models\User;
 use App\Services\BookSearchService;
+use App\Services\PhotoQuotaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use RuntimeException;
 
 class BookController extends Controller
 {
@@ -51,7 +53,7 @@ class BookController extends Controller
         return response()->json($this->serializeBook($book));
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(Request $request, PhotoQuotaService $photoQuota): JsonResponse
     {
         /** @var User $user */
         $user = $request->user();
@@ -80,6 +82,21 @@ class BookController extends Controller
         );
 
         if (! empty($data['pages'])) {
+            $newCount = 0;
+            foreach ($data['pages'] as $pageData) {
+                $exists = Page::query()
+                    ->where('book_id', $book->id)
+                    ->where('local_id', $pageData['local_id'])
+                    ->exists();
+                if (! $exists) {
+                    $newCount++;
+                }
+            }
+            try {
+                $photoQuota->assertCanAdd($user, $newCount);
+            } catch (RuntimeException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
             foreach ($data['pages'] as $pageData) {
                 $this->upsertPageFromData($book, $pageData);
             }
@@ -114,7 +131,7 @@ class BookController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    public function storePage(Request $request, string $localId): JsonResponse
+    public function storePage(Request $request, string $localId, PhotoQuotaService $photoQuota): JsonResponse
     {
         $book = $this->findBookOrFail($request, $localId);
 
@@ -127,6 +144,21 @@ class BookController extends Controller
             'ai_status' => ['nullable', 'string', 'max:32'],
             'ai_meta' => ['nullable', 'array'],
         ]);
+
+        $exists = Page::query()
+            ->where('book_id', $book->id)
+            ->where('local_id', $data['local_id'])
+            ->exists();
+
+        if (! $exists) {
+            /** @var User $user */
+            $user = $request->user();
+            try {
+                $photoQuota->assertCanAdd($user, 1);
+            } catch (RuntimeException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
+        }
 
         $page = $this->upsertPageFromData($book, $data);
         $book->touch();

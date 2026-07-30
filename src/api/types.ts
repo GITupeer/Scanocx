@@ -20,6 +20,17 @@ export type OcrQuota = {
   unlimited: boolean;
 };
 
+/** Limit zdjęć stron z backendu. Pro: unlimited. */
+export type PhotoQuota = {
+  plan: string;
+  period_type: 'day' | 'month' | string;
+  period_key: string;
+  limit: number | null;
+  used: number;
+  remaining: number | null;
+  unlimited: boolean;
+};
+
 /** Limit eksportu z backendu — per format. */
 export type ExportFormatQuota = {
   limit: number | null;
@@ -49,6 +60,7 @@ export type ApiUser = {
   quota: AiQuota | null;
   ocr_quota: OcrQuota | null;
   export_quota: ExportQuota | null;
+  photo_quota: PhotoQuota | null;
   created_at?: string | null;
 };
 
