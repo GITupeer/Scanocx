@@ -63,7 +63,7 @@ import {
   useBottomNavInset,
   type IconName,
 } from "@/src/ui";
-import { pages as pagesLabel, relativeDate } from "@/src/utils/format";
+import { formatAiTokens, pages as pagesLabel, relativeDate } from "@/src/utils/format";
 
 const SCREEN_W = Dimensions.get("window").width;
 const CARD_GAP = space.md;
@@ -178,7 +178,7 @@ export default function LibraryScreen() {
 
   const quotaPillLabel = useMemo(() => {
     if (!isLoggedIn || !user) return "Zaloguj";
-    if (user.quota) return `${user.quota.remaining.toLocaleString('pl-PL')} tok. AI`;
+    if (user.quota) return `${formatAiTokens(user.quota.remaining)} tok. AI`;
     return planLabel(user.plan);
   }, [isLoggedIn, user]);
 
@@ -357,7 +357,7 @@ export default function LibraryScreen() {
         iconColor: "#7C3AED",
         meta:
           isLoggedIn && user?.quota
-            ? `${user.quota.remaining.toLocaleString('pl-PL')} tok. AI`
+            ? `${formatAiTokens(user.quota.remaining)} tok. AI`
             : "Korekta tekstu",
         label: "AI",
         onPress: () => router.push((isLoggedIn ? "/usage" : "/login") as Href),
@@ -716,7 +716,7 @@ export default function LibraryScreen() {
             label="Użycie AI i OCR"
             detail={
               isLoggedIn && user?.quota
-                ? `${user.quota.remaining.toLocaleString('pl-PL')} tokenów AI`
+                ? `${formatAiTokens(user.quota.remaining)} tokenów AI`
                 : undefined
             }
             chevron

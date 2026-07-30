@@ -2,6 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 
 import { pages as pagesLabel } from '@/src/utils/format';
+import { PRO_AI_MONTHLY_LIMIT } from '@/src/plans/features';
 
 import { Button } from './Button';
 import { Gradient } from './Gradient';
@@ -25,8 +26,8 @@ export function AiLimitPromoCard({ count, onPress, style }: Props) {
   const title = 'Limit tokenów AI wykorzystany';
   const detail =
     count === 1
-      ? `Została ${waiting} bez korekty. Przejdź na Pro, aby kontynuować.`
-      : `Zostało ${waiting} bez korekty. Przejdź na Pro, aby kontynuować.`;
+      ? `Została ${waiting} bez korekty. Pro: ${PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów (~1000 stron).`
+      : `Zostało ${waiting} bez korekty. Pro: ${PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów (~1000 stron).`;
 
   return (
     <View style={[styles.wrap, style]}>

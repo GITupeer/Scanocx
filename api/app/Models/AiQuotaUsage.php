@@ -15,6 +15,14 @@ class AiQuotaUsage extends Model
         'reserved',
     ];
 
+    protected function casts(): array
+    {
+        return [
+            'used' => 'decimal:2',
+            'reserved' => 'decimal:2',
+        ];
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

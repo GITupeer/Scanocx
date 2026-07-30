@@ -216,7 +216,8 @@ export default function PlansScreen() {
                 <View style={styles.ctaText}>
                   <Text style={styles.ctaTitle}>Odblokuj Scanocx Pro</Text>
                   <Text style={styles.ctaBody}>
-                    Więcej AI, większy limit OCR i eksport eBook bez ograniczeń.
+                    {PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów AI (~1000 stron),{' '}
+                    {PRO_OCR_MONTHLY_LIMIT.toLocaleString('pl-PL')} OCR i eksport eBook bez ograniczeń.
                   </Text>
                 </View>
                 <Button

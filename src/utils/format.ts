@@ -12,6 +12,19 @@ export function pages(count: number): string {
   return `${count} ${plural(count, 'strona', 'strony', 'stron')}`;
 }
 
+/** Tokeny AI użytkownika — w UI zawsze pełna liczba (bez ułamków). */
+export function formatAiTokens(value: number): string {
+  return Math.round(value).toLocaleString('pl-PL');
+}
+
+/** Tokeny platformy z dokładnością do 2 miejsc (historia zużycia). */
+export function formatAiTokensPrecise(value: number): string {
+  return value.toLocaleString('pl-PL', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 const TIME = new Intl.DateTimeFormat('pl-PL', { hour: '2-digit', minute: '2-digit' });
 const DAY = new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'short' });
 const DAY_YEAR = new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' });

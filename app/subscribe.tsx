@@ -104,8 +104,9 @@ export default function SubscribeScreen() {
           </View>
           <Text style={styles.heroTitle}>Więcej AI. Więcej OCR.</Text>
           <Text style={styles.heroBody}>
-            Skanuj i poprawiaj tekst bez zatrzymywania się na limicie darmowego
-            planu.
+            Pro: {PRO_AI_MONTHLY_LIMIT.toLocaleString("pl-PL")} tokenów AI (~1000 stron) i{" "}
+            {PRO_OCR_MONTHLY_LIMIT.toLocaleString("pl-PL")} OCR na miesiąc — bez limitu książek i
+            eksportów.
           </Text>
         </View>
 
@@ -115,8 +116,8 @@ export default function SubscribeScreen() {
             <View style={styles.proActiveText}>
               <Text style={styles.proActiveTitle}>Subskrypcja aktywna</Text>
               <Text style={styles.proActiveDetail}>
-                Korzystasz z limitu Pro: {PRO_AI_MONTHLY_LIMIT.toLocaleString("pl-PL")} tokenów AI i{" "}
-                {PRO_OCR_MONTHLY_LIMIT.toLocaleString("pl-PL")} OCR na okres.
+                Korzystasz z limitu Pro: {PRO_AI_MONTHLY_LIMIT.toLocaleString("pl-PL")} tokenów AI
+                (~1000 stron) i {PRO_OCR_MONTHLY_LIMIT.toLocaleString("pl-PL")} OCR na okres.
               </Text>
             </View>
           </View>
@@ -233,7 +234,7 @@ export default function SubscribeScreen() {
 
         <View style={styles.perks}>
           {[
-            "Więcej korekty AI na trudniejsze skany",
+            `${PRO_AI_MONTHLY_LIMIT.toLocaleString("pl-PL")} tokenów AI (~1000 stron) na okres`,
             "Priorytetowa kolejka AI — szybsza analiza",
             `${PRO_OCR_MONTHLY_LIMIT.toLocaleString("pl-PL")} odczytów OCR na okres`,
             "TXT bez limitu · PDF i eBook bez limitu",

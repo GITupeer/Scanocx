@@ -125,6 +125,8 @@ export type AiUsagePage = {
   prompt_tokens?: number | null;
   output_tokens?: number | null;
   total_tokens?: number | null;
+  /** Tokeny platformy (nasze), dokładność 0.01. */
+  user_tokens?: number | null;
 };
 
 export type AiUsageItem = {
@@ -141,6 +143,8 @@ export type AiUsageItem = {
   prompt_tokens?: number;
   output_tokens?: number;
   total_tokens?: number;
+  /** Suma tokenów platformy (nasze), dokładność 0.01. */
+  user_tokens?: number;
 };
 
 /** Metadane strony z backendu (bez obrazu — zdjęcia lokalne). */

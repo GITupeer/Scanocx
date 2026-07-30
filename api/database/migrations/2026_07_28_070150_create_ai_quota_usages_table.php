@@ -13,8 +13,8 @@ return new class extends Migration
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
             $table->string('period_type', 16);
             $table->string('period_key', 16);
-            $table->unsignedInteger('used')->default(0);
-            $table->unsignedInteger('reserved')->default(0);
+            $table->decimal('used', 12, 2)->default(0);
+            $table->decimal('reserved', 12, 2)->default(0);
             $table->timestamps();
 
             $table->unique(['user_id', 'period_type', 'period_key']);

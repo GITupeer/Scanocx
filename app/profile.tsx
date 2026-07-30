@@ -18,6 +18,7 @@ import * as api from '@/src/api/endpoints';
 import { ApiError } from '@/src/api/types';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useOcrQueue } from '@/src/ocr/queue';
+import { PRO_AI_MONTHLY_LIMIT } from '@/src/plans/features';
 import {
   BottomNav,
   Button,
@@ -299,7 +300,7 @@ export default function ProfileScreen() {
                     <Row
                       icon="bolt"
                       label="Przejdź na Pro"
-                      detail="Więcej AI i większy limit OCR"
+                      detail={`${PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów AI (~1000 stron)`}
                       tone="primary"
                       chevron
                       onPress={() => router.push('/subscribe')}

@@ -53,17 +53,35 @@ class AiController extends Controller
                     'created_at' => optional($batch->created_at)?->toIso8601String(),
                     'updated_at' => optional($batch->updated_at)?->toIso8601String(),
                     'pages' => $jobs->map(function (AiJob $job) {
+                        $prompt = isset($job->prompt_tokens) ? (int) $job->prompt_tokens : null;
+                        $output = isset($job->output_tokens) ? (int) $job->output_tokens : null;
+                        $total = isset($job->total_tokens) ? (int) $job->total_tokens : null;
+                        $hasApiTokens = ($prompt ?? 0) + ($output ?? 0) + ($total ?? 0) > 0;
+
                         return [
                             'page_index' => $job->page?->index,
                             'status' => $job->status,
                             'prompt_tokens' => $job->prompt_tokens,
                             'output_tokens' => $job->output_tokens,
                             'total_tokens' => $job->total_tokens,
+                            'user_tokens' => $hasApiTokens
+                                ? AiQuotaService::toUserTokens($prompt, $output, $total)
+                                : null,
                         ];
                     })->all(),
                     'prompt_tokens' => $jobs->sum(fn (AiJob $job) => (int) ($job->prompt_tokens ?? 0)),
                     'output_tokens' => $jobs->sum(fn (AiJob $job) => (int) ($job->output_tokens ?? 0)),
                     'total_tokens' => $jobs->sum(fn (AiJob $job) => (int) ($job->total_tokens ?? 0)),
+                    'user_tokens' => round($jobs->sum(function (AiJob $job) {
+                        $prompt = isset($job->prompt_tokens) ? (int) $job->prompt_tokens : null;
+                        $output = isset($job->output_tokens) ? (int) $job->output_tokens : null;
+                        $total = isset($job->total_tokens) ? (int) $job->total_tokens : null;
+                        if (($prompt ?? 0) + ($output ?? 0) + ($total ?? 0) <= 0) {
+                            return 0;
+                        }
+
+                        return AiQuotaService::toUserTokens($prompt, $output, $total);
+                    }), 2),
                 ];
             })->all(),
         ]);

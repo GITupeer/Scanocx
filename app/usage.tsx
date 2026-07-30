@@ -18,6 +18,7 @@ import {
   refreshPhotoQuota,
   usePhotoQuota,
 } from '@/src/photos/quota';
+import { AI_RESERVE_TOKENS_PER_PAGE, PRO_AI_MONTHLY_LIMIT } from '@/src/plans/features';
 import {
   AppBar,
   AuroraBackdrop,
@@ -32,7 +33,7 @@ import {
   shadow,
   space,
 } from '@/src/ui';
-import { pages as pagesLabel, relativeDate } from '@/src/utils/format';
+import { formatAiTokens, formatAiTokensPrecise, pages as pagesLabel, relativeDate } from '@/src/utils/format';
 
 function planLabel(plan: string | undefined): string {
   return plan === 'pro' ? 'Pro' : 'Darmowy';
@@ -76,6 +77,9 @@ function usageDetail(item: AiUsageItem): string {
   if (item.failed > 0) parts.push(`${item.failed} błąd`);
   if (typeof item.total_tokens === 'number' && item.total_tokens > 0) {
     parts.push(`${item.total_tokens.toLocaleString('pl-PL')} tok. API`);
+  }
+  if (typeof item.user_tokens === 'number' && item.user_tokens > 0) {
+    parts.push(`${formatAiTokensPrecise(item.user_tokens)} tok. platformy`);
   }
   const pages = item.pages
     .map((p) => p.page_index)
@@ -272,16 +276,24 @@ export default function UsageScreen() {
           {quota ? (
             <>
               <Text style={styles.quotaValue}>
-                {quota.remaining.toLocaleString('pl-PL')} z {quota.limit.toLocaleString('pl-PL')}{' '}
-                tokenów
+                {formatAiTokens(quota.remaining)} z {formatAiTokens(quota.limit)} tokenów
               </Text>
               <Text style={styles.quotaHint}>
-                {quota.used.toLocaleString('pl-PL')} zużyte
+                {formatAiTokens(quota.used)} zużyte
                 {quota.reserved > 0
-                  ? ` · ${quota.reserved.toLocaleString('pl-PL')} zarezerwowane`
+                  ? ` · ${formatAiTokens(quota.reserved)} zarezerwowane`
                   : ''}
                 {' · '}
                 / {quota.period_type === 'day' ? 'dzień' : 'miesiąc'}
+                {' · '}~
+                {Math.max(
+                  0,
+                  Math.floor(
+                    quota.remaining /
+                      (quota.reserve_tokens_per_page ?? AI_RESERVE_TOKENS_PER_PAGE),
+                  ),
+                )}{' '}
+                stron
               </Text>
               <ProgressBar
                 value={
@@ -302,7 +314,9 @@ export default function UsageScreen() {
               accessibilityLabel="Kup subskrypcję Pro"
               onPress={() => router.push('/subscribe')}
               style={({ pressed }) => [styles.upgradeLink, pressed && styles.upgradeLinkPressed]}>
-              <Text style={styles.upgradeLinkText}>Kup subskrypcję Pro</Text>
+              <Text style={styles.upgradeLinkText}>
+                Pro: {PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów AI (~1000 stron)
+              </Text>
             </Pressable>
           ) : null}
         </Card>

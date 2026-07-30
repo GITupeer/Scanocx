@@ -20,6 +20,7 @@ import {
   radius,
   space,
 } from '@/src/ui';
+import { formatAiTokens } from '@/src/utils/format';
 
 export default function AdminUsersScreen() {
   const router = useRouter();
@@ -95,8 +96,8 @@ export default function AdminUsersScreen() {
                 />
                 {user.quota ? (
                   <Text style={styles.quota}>
-                    AI: {user.quota.remaining.toLocaleString('pl-PL')}/
-                    {user.quota.limit.toLocaleString('pl-PL')} tok. (
+                    AI: {formatAiTokens(user.quota.remaining)}/
+                    {formatAiTokens(user.quota.limit)} tok. (
                     {user.quota.period_type === 'day' ? 'dzień' : 'miesiąc'})
                   </Text>
                 ) : null}

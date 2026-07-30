@@ -20,6 +20,7 @@ import {
   FREE_BOOK_LIMIT,
   FREE_OCR_MONTHLY_LIMIT,
   FREE_PHOTO_MONTHLY_LIMIT,
+  PRO_AI_MONTHLY_LIMIT,
   PRO_OCR_MONTHLY_LIMIT,
 } from '@/src/plans/features';
 
@@ -74,7 +75,8 @@ export default function RegisterScreen() {
           <Text style={styles.subtitle}>
             Po rejestracji: {FREE_BOOK_LIMIT} książki · {FREE_OCR_MONTHLY_LIMIT} OCR / miesiąc ·{' '}
             {FREE_PHOTO_MONTHLY_LIMIT} zdjęć / miesiąc ·{' '}
-            {FREE_AI_MONTHLY_LIMIT} tokenów AI / miesiąc. Pro = bez limitu książek,{' '}
+            {FREE_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów AI (~5 stron). Pro = bez limitu
+            książek, {PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów AI (~1000 stron),{' '}
             {PRO_OCR_MONTHLY_LIMIT.toLocaleString('pl-PL')} OCR i nielimitowane zdjęcia.
           </Text>
 
