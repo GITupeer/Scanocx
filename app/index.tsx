@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/auth/AuthProvider";
 import type { BookSummary } from "@/src/domain/types";
+import { listLibraryBooks } from "@/src/library/books";
 import { useOcrQueue } from "@/src/ocr/queue";
 import { refreshOcrQuota, useOcrQuota } from "@/src/ocr/quota";
 import { searchInBooks, type SearchHit } from "@/src/search/query";
@@ -23,7 +24,6 @@ import {
   clearBookCover,
   createBook,
   deleteBook,
-  listBooks,
   renameBook,
   setBookCover,
 } from "@/src/storage/books";
@@ -41,8 +41,11 @@ import {
   HomeHeroOrbs,
   Icon,
   IconButton,
+  isExpoBlurAvailable,
   Loader,
   Row,
+  SafeBlurTargetView,
+  SafeBlurView,
   ScanQueueCard,
   Sheet,
   SheetGroup,
@@ -110,21 +113,30 @@ export default function LibraryScreen() {
   const [renaming, setRenaming] = useState(false);
   const [coverBusy, setCoverBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<BookSummary | null>(null);
+  const searchBlurTargetRef = useRef<View | null>(null);
 
   const refresh = useCallback(async () => {
+    if (!isLoggedIn) {
+      setBooks([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      setBooks(await listBooks());
+      setBooks(await listLibraryBooks());
+    } catch {
+      setBooks([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isLoggedIn]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!ready) return;
       void refresh();
       void refreshOcrQuota();
-      if (ready && isLoggedIn) {
+      if (isLoggedIn) {
         void refreshAuth();
       }
     }, [refresh, ready, isLoggedIn, refreshAuth]),
@@ -132,7 +144,7 @@ export default function LibraryScreen() {
 
   useEffect(() => {
     const needle = query.trim();
-    if (!needle) {
+    if (!needle || !isLoggedIn) {
       setSearchHits([]);
       setSearchLoading(false);
       return;
@@ -147,7 +159,7 @@ export default function LibraryScreen() {
     }, 180);
 
     return () => clearTimeout(handle);
-  }, [query]);
+  }, [query, isLoggedIn]);
 
   const recentBooks = useMemo(
     () =>
@@ -165,6 +177,10 @@ export default function LibraryScreen() {
   }, [isLoggedIn, user]);
 
   const onCreate = async () => {
+    if (!isLoggedIn) {
+      router.push("/login");
+      return;
+    }
     setCreating(true);
     try {
       const book = await createBook(title);
@@ -265,12 +281,24 @@ export default function LibraryScreen() {
   };
 
   const openScan = useCallback(() => {
+    if (!isLoggedIn) {
+      router.push("/login");
+      return;
+    }
     if (books.length === 0) {
       setCreateOpen(true);
       return;
     }
     setScanOpen(true);
-  }, [books.length]);
+  }, [books.length, isLoggedIn, router]);
+
+  const openCreate = useCallback(() => {
+    if (!isLoggedIn) {
+      router.push("/login");
+      return;
+    }
+    setCreateOpen(true);
+  }, [isLoggedIn, router]);
 
   const scanParamHandled = useRef(false);
   useEffect(() => {
@@ -300,7 +328,7 @@ export default function LibraryScreen() {
         iconColor: "#10B981",
         meta: `${books.length} w bibliotece`,
         label: "Nowa książka",
-        onPress: () => setCreateOpen(true),
+        onPress: openCreate,
       },
       {
         id: "ai",
@@ -341,6 +369,7 @@ export default function LibraryScreen() {
       ocrQuota.remaining,
       ocrQuota.unlimited,
       openScan,
+      openCreate,
       queue.remaining,
       router,
       user?.plan,
@@ -348,7 +377,7 @@ export default function LibraryScreen() {
     ],
   );
 
-  if (loading && books.length === 0) {
+  if (!ready || (loading && books.length === 0 && isLoggedIn)) {
     return <Loader label="Wczytywanie biblioteki…" />;
   }
 
@@ -365,13 +394,23 @@ export default function LibraryScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <FadeInUp>
-          <Gradient
-            colors={gradients.homeHero}
-            angle={165}
-            fallbackColor={colors.blue}
+          <View
             style={[styles.hero, { paddingTop: insets.top + space.md }]}
           >
-            <HomeHeroOrbs />
+            <SafeBlurTargetView
+              ref={searchBlurTargetRef}
+              style={styles.heroBlurTarget}
+              pointerEvents="none"
+            >
+              <Gradient
+                colors={gradients.homeHero}
+                angle={165}
+                fallbackColor={colors.blue}
+                style={StyleSheet.absoluteFill}
+              >
+                <HomeHeroOrbs />
+              </Gradient>
+            </SafeBlurTargetView>
 
             <FadeInUp delay={40} distance={10}>
               <View style={styles.heroTop}>
@@ -426,10 +465,19 @@ export default function LibraryScreen() {
             </FadeInUp>
 
             <FadeInUp delay={220} distance={18}>
-              <View
+              <SafeBlurView
+                blurTarget={searchBlurTargetRef}
+                intensity={72}
+                tint="systemUltraThinMaterialLight"
+                blurMethod="dimezisBlurViewSdk31Plus"
+                blurReductionFactor={3}
                 style={[
                   styles.searchBar,
+                  !isExpoBlurAvailable && styles.searchBarSolid,
                   searchFocused && styles.searchBarFocused,
+                  searchFocused &&
+                    !isExpoBlurAvailable &&
+                    styles.searchBarFocusedSolid,
                 ]}
               >
                 <Icon
@@ -467,9 +515,9 @@ export default function LibraryScreen() {
                     <Icon name="search" size={16} color={colors.ink} />
                   </View>
                 )}
-              </View>
+              </SafeBlurView>
             </FadeInUp>
-          </Gradient>
+          </View>
 
           <View style={styles.body}>
             <ScanQueueCard style={styles.queue} />
@@ -482,7 +530,7 @@ export default function LibraryScreen() {
                   <Pressable
                     accessibilityRole="button"
                     hitSlop={8}
-                    onPress={() => setCreateOpen(true)}
+                    onPress={openCreate}
                     style={({ pressed }) => pressed && styles.pressed}
                   >
                     <Text style={styles.sectionLink}>Dodaj</Text>
@@ -540,7 +588,7 @@ export default function LibraryScreen() {
                 <Pressable
                   accessibilityRole="button"
                   hitSlop={8}
-                  onPress={() => setCreateOpen(true)}
+                  onPress={openCreate}
                   style={({ pressed }) => pressed && styles.pressed}
                 >
                   <Text style={styles.sectionLink}>Nowa</Text>
@@ -570,6 +618,17 @@ export default function LibraryScreen() {
                   ))}
                 </View>
               )
+            ) : !isLoggedIn ? (
+              <EmptyState
+                icon="lock"
+                title="Zaloguj się, aby zobaczyć książki"
+                body="Biblioteka i skanowanie wymagają konta. Po zalogowaniu zobaczysz książki zapisane na serwerze."
+                action={{
+                  label: "Zaloguj się",
+                  icon: "user",
+                  onPress: () => router.push("/login"),
+                }}
+              />
             ) : books.length === 0 ? (
               <EmptyState
                 icon="book"
@@ -578,7 +637,7 @@ export default function LibraryScreen() {
                 action={{
                   label: "Nowa książka",
                   icon: "plus",
-                  onPress: () => setCreateOpen(true),
+                  onPress: openCreate,
                 }}
               />
             ) : (
@@ -652,7 +711,7 @@ export default function LibraryScreen() {
             label="Nowa książka"
             onPress={() => {
               setMenuOpen(false);
-              setCreateOpen(true);
+              openCreate();
             }}
           />
           <View style={styles.sheetDivider} />
@@ -734,7 +793,7 @@ export default function LibraryScreen() {
           variant="soft"
           onPress={() => {
             setScanOpen(false);
-            setCreateOpen(true);
+            openCreate();
           }}
         />
       </Sheet>
@@ -1013,6 +1072,9 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 28,
     borderBottomRightRadius: 28,
   },
+  heroBlurTarget: {
+    ...StyleSheet.absoluteFill,
+  },
   heroTop: {
     flexDirection: "row",
     alignItems: "center",
@@ -1082,14 +1144,23 @@ const styles = StyleSheet.create({
     paddingLeft: space.lg,
     paddingRight: space.sm,
     paddingVertical: space.sm,
-    backgroundColor: colors.white,
+    overflow: "hidden",
+    backgroundColor: "rgba(255,255,255,0.42)",
     borderRadius: radius.pill,
     borderWidth: 1.5,
-    borderColor: "transparent",
+    borderColor: "rgba(255,255,255,0.55)",
     ...shadow.soft,
+  },
+  searchBarSolid: {
+    backgroundColor: colors.white,
+    borderColor: "transparent",
   },
   searchBarFocused: {
     borderColor: colors.primary,
+    backgroundColor: "rgba(255,255,255,0.58)",
+  },
+  searchBarFocusedSolid: {
+    backgroundColor: colors.white,
   },
   searchTextCol: {
     flex: 1,
@@ -1157,7 +1228,7 @@ const styles = StyleSheet.create({
     paddingVertical: space.md,
     paddingHorizontal: space.md,
     backgroundColor: colors.surface,
-    borderRadius: 18,
+    borderRadius: 10,
     ...shadow.soft,
   },
   categoryCardPressed: {
@@ -1167,7 +1238,7 @@ const styles = StyleSheet.create({
   categoryIcon: {
     width: 40,
     height: 40,
-    borderRadius: 12,
+    borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
   },

@@ -599,6 +599,7 @@ export async function resumePendingCloudAi(preferredBookId?: string): Promise<vo
 }
 
 function isAiQuotaExceeded(error: unknown): boolean {
+  if (error instanceof AiQuotaExceededError) return true;
   if (!(error instanceof ApiError)) return false;
   if (error.status === 402 || error.status === 429) return true;
   return isAiQuotaErrorMessage(error.message);
@@ -610,8 +611,21 @@ function isAiQuotaErrorMessage(message: string | null | undefined): boolean {
   return (
     msg.includes('limit') ||
     msg.includes('quota') ||
-    msg.includes('przekrocz')
+    msg.includes('przekrocz') ||
+    msg.includes('wykorzystano limit')
   );
+}
+
+/** Brak pozostałych korekt AI w limicie — UI powinno skierować na /subscribe. */
+export class AiQuotaExceededError extends Error {
+  constructor(message = 'Wykorzystano limit korekt AI na ten okres.') {
+    super(message);
+    this.name = 'AiQuotaExceededError';
+  }
+}
+
+export function isAiQuotaError(error: unknown): boolean {
+  return isAiQuotaExceeded(error);
 }
 
 async function clearAiQuotaErrors(
@@ -659,6 +673,9 @@ async function startCloudAnalysis(
     .sort((a, b) => a.index - b.index);
 
   if (pages.length === 0) {
+    if (pageIds && pageIds.length > 0) {
+      throw new Error('Nie znaleziono strony do korekty AI (brak zdjęcia?).');
+    }
     return 0;
   }
 
@@ -668,18 +685,24 @@ async function startCloudAnalysis(
     const remaining = Math.max(0, quota.remaining);
     if (remaining <= 0) {
       await clearAiQuotaErrors(bookId, pages);
-      return 0;
+      throw new AiQuotaExceededError();
     }
     if (pages.length > remaining) {
       const skipped = pages.slice(remaining);
       pages = pages.slice(0, remaining);
       await clearAiQuotaErrors(bookId, skipped);
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof AiQuotaExceededError) {
+      throw error;
+    }
     // Brak sieci / quota — spróbuj wysłać; backend i tak odrzuci przy limicie.
   }
 
   if (pages.length === 0) {
+    if (pageIds && pageIds.length > 0) {
+      throw new Error('Nie znaleziono strony do korekty AI (brak zdjęcia?).');
+    }
     return 0;
   }
 
@@ -725,7 +748,7 @@ async function startCloudAnalysis(
           pages: chunk.map((page) => ({
             local_id: page.id,
             index: page.index,
-            imageUri: page.imageUri,
+            imageUri: page.imageUri!,
             printed_page_number: page.printedPageNumber,
           })),
         },
@@ -767,7 +790,7 @@ async function startCloudAnalysis(
 
     return pages.length;
   } catch (error) {
-    // Limit wyczerpany — cicho wycofaj pending, bez błędu na stronach / w karcie kolejki.
+    // Limit wyczerpany — wyczyść pending i rzuć typowany błąd (UI → /subscribe).
     if (isAiQuotaExceeded(error)) {
       await resetPagesToIdle(
         bookId,
@@ -776,7 +799,9 @@ async function startCloudAnalysis(
       resetCounters();
       await clearPersistedActiveBatch();
       publish();
-      return 0;
+      throw new AiQuotaExceededError(
+        error instanceof Error ? error.message : undefined
+      );
     }
 
     const message = error instanceof Error ? error.message : 'Błąd analizy AI.';
@@ -862,7 +887,19 @@ export async function clearAiQuotaErrorsForBook(bookId: string): Promise<boolean
 }
 
 export async function runPageAiExclusive(bookId: string, pageId: string): Promise<string> {
-  await startCloudAnalysis(bookId, [pageId], true);
+  // Odblokuj ewentualny „zawieszony” stan kolejki po przerwanej sesji.
+  if (running) {
+    resetCounters();
+    publish();
+  }
+
+  const started = await startCloudAnalysis(bookId, [pageId], true);
+  if (started <= 0) {
+    throw new Error(
+      'Nie uruchomiono korekty AI. Sprawdź limit korekt albo spróbuj ponownie za chwilę.'
+    );
+  }
+
   const book = await getBook(bookId);
   const page = book.pages.find((p) => p.id === pageId);
   if (!page || page.aiStatus !== 'done' || !page.aiText.trim()) {

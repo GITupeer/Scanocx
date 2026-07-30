@@ -40,3 +40,9 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# UVDoc conversion scratch (ONNX + onnx2tf out)
+scripts/.uvdoc_convert/
+
+# PP-OCR conversion scratch (paddle / iFleey clone)
+scripts/.ppocr_convert/

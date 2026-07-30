@@ -40,7 +40,8 @@ export type AiAnalysis = {
 export type BookPage = {
   id: string;
   index: number;
-  imageUri: string;
+  /** Lokalny JPEG; null gdy strona istnieje tylko na backendzie (brak pliku na urządzeniu). */
+  imageUri: string | null;
   /** Surowy tekst z OCR (ML Kit) — nigdy nie nadpisywany przez AI. */
   ocrText: string;
   /** Tekst po korekcie Gemini; pusty, gdy AI jeszcze nie przetworzyło strony. */

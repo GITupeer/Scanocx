@@ -1,5 +1,16 @@
 import { apiRequest } from '@/src/api/client';
-import type { AiBatch, AiQuota, AiUsageItem, ApiUser, AuthResponse, ExportQuota, OcrQuota } from '@/src/api/types';
+import type {
+  AiBatch,
+  AiQuota,
+  AiUsageItem,
+  ApiBook,
+  ApiBookPage,
+  ApiBookSummary,
+  ApiUser,
+  AuthResponse,
+  ExportQuota,
+  OcrQuota,
+} from '@/src/api/types';
 import * as FileSystem from 'expo-file-system/legacy';
 
 export function register(input: {
@@ -68,6 +79,90 @@ export function resetPassword(input: {
     body: input,
     auth: false,
   });
+}
+
+export type UpsertBookPageInput = {
+  local_id: string;
+  index: number;
+  ocr_text?: string | null;
+  printed_page_number?: string | null;
+  ai_text?: string | null;
+  ai_status?: string | null;
+  ai_meta?: Record<string, unknown> | null;
+};
+
+export function fetchBooks(): Promise<{ data: ApiBookSummary[] }> {
+  return apiRequest<{ data: ApiBookSummary[] }>('/api/books');
+}
+
+export function fetchBook(localId: string): Promise<ApiBook> {
+  return apiRequest<ApiBook>(`/api/books/${encodeURIComponent(localId)}`);
+}
+
+export function upsertBook(input: {
+  local_id: string;
+  title: string;
+  pages?: UpsertBookPageInput[];
+}): Promise<ApiBook> {
+  return apiRequest<ApiBook>('/api/books', {
+    method: 'POST',
+    body: input,
+  });
+}
+
+export function updateBook(
+  localId: string,
+  input: { title: string }
+): Promise<ApiBookSummary> {
+  return apiRequest<ApiBookSummary>(`/api/books/${encodeURIComponent(localId)}`, {
+    method: 'PATCH',
+    body: input,
+  });
+}
+
+export function deleteBookRemote(localId: string): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>(`/api/books/${encodeURIComponent(localId)}`, {
+    method: 'DELETE',
+  });
+}
+
+export function upsertPage(
+  bookLocalId: string,
+  input: UpsertBookPageInput
+): Promise<ApiBookPage> {
+  return apiRequest<ApiBookPage>(
+    `/api/books/${encodeURIComponent(bookLocalId)}/pages`,
+    {
+      method: 'POST',
+      body: input,
+    }
+  );
+}
+
+export function updatePageRemote(
+  bookLocalId: string,
+  pageLocalId: string,
+  input: Partial<Omit<UpsertBookPageInput, 'local_id'>>
+): Promise<ApiBookPage> {
+  return apiRequest<ApiBookPage>(
+    `/api/books/${encodeURIComponent(bookLocalId)}/pages/${encodeURIComponent(pageLocalId)}`,
+    {
+      method: 'PATCH',
+      body: input,
+    }
+  );
+}
+
+export function deletePageRemote(
+  bookLocalId: string,
+  pageLocalId: string
+): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>(
+    `/api/books/${encodeURIComponent(bookLocalId)}/pages/${encodeURIComponent(pageLocalId)}`,
+    {
+      method: 'DELETE',
+    }
+  );
 }
 
 export function fetchQuota(): Promise<AiQuota> {

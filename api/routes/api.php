@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AdminUserController;
 use App\Http\Controllers\Api\AiController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BookController;
 use App\Http\Controllers\Api\ExportController;
 use App\Http\Controllers\Api\OcrController;
 use Illuminate\Support\Facades\Route;
@@ -17,6 +18,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::patch('/me', [AuthController::class, 'updateProfile']);
     Route::post('/change-password', [AuthController::class, 'changePassword']);
+
+    Route::get('/books', [BookController::class, 'index']);
+    Route::post('/books', [BookController::class, 'store']);
+    Route::get('/books/{localId}', [BookController::class, 'show']);
+    Route::patch('/books/{localId}', [BookController::class, 'update']);
+    Route::delete('/books/{localId}', [BookController::class, 'destroy']);
+    Route::post('/books/{localId}/pages', [BookController::class, 'storePage']);
+    Route::patch('/books/{localId}/pages/{pageLocalId}', [BookController::class, 'updatePage']);
+    Route::delete('/books/{localId}/pages/{pageLocalId}', [BookController::class, 'destroyPage']);
 
     Route::get('/ai/quota', [AiController::class, 'quota']);
     Route::get('/ai/usage', [AiController::class, 'usage']);

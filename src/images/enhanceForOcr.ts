@@ -10,14 +10,16 @@ if (typeof globalThis.Buffer === 'undefined') {
   (globalThis as typeof globalThis & { Buffer: typeof Buffer }).Buffer = Buffer;
 }
 
-/** Długi bok pod OCR — wystarczy ML Kit, a JS nie dusi pamięci. */
-const OCR_MAX_EDGE = 1600;
+/** Długi bok pod OCR — więcej detalu dla drobnego druku, JS nadal ogarnia. */
+const OCR_MAX_EDGE = 1920;
 
 export type EnhanceForOcrOptions = {
-  /** Wzmocnienie kontrastu po stretchu (1 = neutralnie). Domyślnie 1.35. */
+  /** Wzmocnienie kontrastu po stretchu (1 = neutralnie). Domyślnie 1.42. */
   contrast?: number;
-  /** Przesunięcie jasności w zakresie ok. -60…60. */
-  brightness?: number;
+  /** Przesunięcie jasności w zakresie ok. -60…60. null = auto z histograma. */
+  brightness?: number | null;
+  /** Preset: standard / dark (ciemne zdjęcie) / bright (prześwietlone). */
+  preset?: 'standard' | 'dark' | 'bright';
 };
 
 function base64ToBytes(base64: string): Uint8Array {
@@ -43,13 +45,36 @@ function clampByte(value: number): number {
   return value < 0 ? 0 : value > 255 ? 255 : value | 0;
 }
 
+function resolvePreset(options: EnhanceForOcrOptions): {
+  contrast: number;
+  brightness: number | null;
+} {
+  const preset = options.preset ?? 'standard';
+  if (preset === 'dark') {
+    return {
+      contrast: options.contrast ?? 1.55,
+      brightness: options.brightness ?? 18,
+    };
+  }
+  if (preset === 'bright') {
+    return {
+      contrast: options.contrast ?? 1.28,
+      brightness: options.brightness ?? -12,
+    };
+  }
+  return {
+    contrast: options.contrast ?? 1.42,
+    brightness: options.brightness === undefined ? null : options.brightness,
+  };
+}
+
 /**
- * Grayscale + rozciągnięcie kontrastu (percentyle) + boost + jasność.
+ * Grayscale + percentyle + S-krzywa (tekst vs papier) + adaptive jasność.
  */
 function enhanceRgbaInPlace(
   data: Uint8Array,
   pixelCount: number,
-  options: { contrast: number; brightness: number }
+  options: { contrast: number; brightness: number | null }
 ): void {
   const hist = new Uint32Array(256);
 
@@ -85,20 +110,47 @@ function enhanceRgbaInPlace(
   }
 
   if (high <= low + 8) {
-    low = Math.max(0, low - 10);
-    high = Math.min(255, high + 10);
+    low = Math.max(0, low - 12);
+    high = Math.min(255, high + 12);
+  }
+
+  // Średnia luma — do auto-jasności przy „płaskich” skanach.
+  let lumaSum = 0;
+  for (let v = 0; v < 256; v++) {
+    lumaSum += v * hist[v]!;
+  }
+  const meanLuma = lumaSum / Math.max(1, pixelCount);
+
+  let brightness = options.brightness;
+  if (brightness === null) {
+    if (meanLuma < 95) brightness = 16;
+    else if (meanLuma < 115) brightness = 8;
+    else if (meanLuma > 195) brightness = -14;
+    else if (meanLuma > 175) brightness = -6;
+    else brightness = 2;
   }
 
   const range = Math.max(1, high - low);
   const contrast = options.contrast;
-  const brightness = options.brightness;
   const mid = 128;
 
   for (let i = 0; i < pixelCount; i++) {
     const o = i * 4;
     const stretched = ((data[o]! - low) * 255) / range;
-    const boosted = (stretched - mid) * contrast + mid + brightness;
-    const y = clampByte(boosted);
+    // S-krzywa — mocniejszy kontrast w środku (atrament vs papier).
+    const n = Math.max(0, Math.min(1, stretched / 255));
+    const s = n < 0.5 ? 2 * n * n : 1 - 2 * (1 - n) * (1 - n);
+    let v = (s * 255 - mid) * contrast + mid + brightness;
+
+    // Przyciśnij atrament.
+    if (v < 58) v *= 0.8;
+    // Wybiel papier.
+    if (v > 178) {
+      const t = Math.min(1, (v - 178) / 77);
+      v += (255 - v) * t * 0.7;
+    }
+
+    const y = clampByte(v);
     data[o] = y;
     data[o + 1] = y;
     data[o + 2] = y;
@@ -116,7 +168,7 @@ async function downscaleForOcr(uri: string): Promise<string> {
   const result = await manipulateAsync(
     uri,
     [{ resize: { width: Math.round(width * scale), height: Math.round(height * scale) } }],
-    { compress: 0.95, format: SaveFormat.JPEG }
+    { compress: 0.96, format: SaveFormat.JPEG }
   );
   return result.uri;
 }
@@ -129,8 +181,7 @@ export async function enhanceForOcr(
   uri: string,
   options: EnhanceForOcrOptions = {}
 ): Promise<string> {
-  const contrast = options.contrast ?? 1.35;
-  const brightness = options.brightness ?? 0;
+  const { contrast, brightness } = resolvePreset(options);
 
   try {
     const scaledUri = await downscaleForOcr(uri);
@@ -150,7 +201,7 @@ export async function enhanceForOcr(
         height: raw.height,
         data: raw.data,
       },
-      88
+      90
     );
 
     const outBytes =
@@ -158,7 +209,9 @@ export async function enhanceForOcr(
         ? encoded.data
         : new Uint8Array(encoded.data as ArrayBuffer);
 
-    const outPath = `${FileSystem.cacheDirectory}ocr-enhance-${Date.now()}.jpg`;
+    const outPath = `${FileSystem.cacheDirectory}ocr-enhance-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 7)}.jpg`;
     await FileSystem.writeAsStringAsync(outPath, bytesToBase64(outBytes), {
       encoding: FileSystem.EncodingType.Base64,
     });

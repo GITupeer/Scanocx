@@ -3,7 +3,8 @@ import { recognizeText } from 'expo-mlkit-ocr';
 
 import { rotateUri } from '@/src/images/ensurePortrait';
 
-const READABLE_CHARS = /[A-Za-zÀ-žąćęłńóśźżĄĆĘŁŃÓŚŹŻ0-9]/g;
+/** Litery/cyfry Unicode — działa dla PL, EN, DE, FR, ES, IT, PT, CYR… */
+const READABLE_CHARS = /[\p{L}\p{N}]/gu;
 
 export function countReadableChars(result: RecognitionResult): number {
   return ((result.text ?? '').match(READABLE_CHARS) ?? []).length;

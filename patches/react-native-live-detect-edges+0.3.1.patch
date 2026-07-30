@@ -1,0 +1,147 @@
+diff --git a/node_modules/react-native-live-detect-edges/android/src/main/java/com/livedetectedges/DocumentDetector.kt b/node_modules/react-native-live-detect-edges/android/src/main/java/com/livedetectedges/DocumentDetector.kt
+index 9600eac..8c85ff6 100644
+--- a/node_modules/react-native-live-detect-edges/android/src/main/java/com/livedetectedges/DocumentDetector.kt
++++ b/node_modules/react-native-live-detect-edges/android/src/main/java/com/livedetectedges/DocumentDetector.kt
+@@ -27,6 +27,10 @@ class DocumentDetector(private val context: Context? = null) {
+     // Segmentation detector (optional, falls back to Canny if segmentation is not available)
+     private var segmentationDetector: SegmentationDetector? = null
+ 
++    // Dimensions of the last Mat passed to detectInternal (upright / processing orientation).
++    private var lastProcessingWidth: Int = 0
++    private var lastProcessingHeight: Int = 0
++
+     // Minimal area ratio of a candidate contour relative to the full frame.
+     // Lower value makes it easier to detect smaller/partial documents while still filtering noise.
+     private val AREA_THRESHOLD_RATIO = 0.02
+@@ -142,6 +146,9 @@ class DocumentDetector(private val context: Context? = null) {
+     }
+ 
+     private fun detectInternal(processingMat: Mat): List<PointF>? {
++        lastProcessingWidth = processingMat.width()
++        lastProcessingHeight = processingMat.height()
++
+          // 3. Try segmentation first if available, otherwise fall back to Canny
+         val probMask = if (segmentationDetector?.isModelLoaded() == true) {
+             // Pre-processing
+@@ -239,9 +246,9 @@ class DocumentDetector(private val context: Context? = null) {
+         return listOf(points[tlIndex], points[trIndex], points[brIndex], points[blIndex])
+     }
+ 
+-    // Helper to get image dimensions
+-    fun getWidth() = if(rotatedMat.empty()) srcGray.width() else rotatedMat.width()
+-    fun getHeight() = if(rotatedMat.empty()) srcGray.height() else rotatedMat.height()
++    // Helper to get image dimensions of the last processed (upright) frame
++    fun getWidth() = if (lastProcessingWidth > 0) lastProcessingWidth else srcGray.width()
++    fun getHeight() = if (lastProcessingHeight > 0) lastProcessingHeight else srcGray.height()
+ 
+     fun release() {
+         segmentationDetector?.release()
+diff --git a/node_modules/react-native-live-detect-edges/android/src/main/java/com/livedetectedges/LiveDetectEdgesView.kt b/node_modules/react-native-live-detect-edges/android/src/main/java/com/livedetectedges/LiveDetectEdgesView.kt
+index 1f9a463..3ebb3a9 100644
+--- a/node_modules/react-native-live-detect-edges/android/src/main/java/com/livedetectedges/LiveDetectEdgesView.kt
++++ b/node_modules/react-native-live-detect-edges/android/src/main/java/com/livedetectedges/LiveDetectEdgesView.kt
+@@ -40,6 +40,13 @@ class LiveDetectEdgesView(context: Context) : FrameLayout(context), LifecycleEve
+     private var cameraProviderFuture: ListenableFuture<ProcessCameraProvider>? = null
+     private var imageCapture: ImageCapture? = null
+ 
++    // Last live-detected quad in analysis-image coordinates (what the green overlay is based on).
++    // Used at shutter so crop matches the on-screen frame instead of re-detecting on high-res
++    // (high-res often snaps to inner content and cuts the page).
++    @Volatile private var lastLivePoints: List<PointF>? = null
++    @Volatile private var lastLiveWidth: Int = 0
++    @Volatile private var lastLiveHeight: Int = 0
++
+     init {
+         if (org.opencv.android.OpenCVLoader.initDebug()) {
+             Log.d("LiveDetectEdgesView", "OpenCV initialization success!")
+@@ -181,10 +188,18 @@ class LiveDetectEdgesView(context: Context) : FrameLayout(context), LifecycleEve
+ 
+         try {
+             val detectedPoints = currentDetector.detect(imageProxy)
+-            if (detectedPoints != null) {
+-                val mappedPoints = mapPoints(detectedPoints, currentDetector.getWidth(), currentDetector.getHeight())
++            if (detectedPoints != null && detectedPoints.size == 4) {
++                val imgW = currentDetector.getWidth()
++                val imgH = currentDetector.getHeight()
++                lastLivePoints = detectedPoints.map { PointF(it.x, it.y) }
++                lastLiveWidth = imgW
++                lastLiveHeight = imgH
++                val mappedPoints = mapPoints(detectedPoints, imgW, imgH)
+                 overlayView.updatePoints(mappedPoints)
+             } else {
++                lastLivePoints = null
++                lastLiveWidth = 0
++                lastLiveHeight = 0
+                 overlayView.updatePoints(null)
+             }
+         } catch (e: Exception) {
+@@ -212,6 +227,28 @@ class LiveDetectEdgesView(context: Context) : FrameLayout(context), LifecycleEve
+         }
+     }
+ 
++    /** Scale quad from live analysis resolution to the captured photo resolution. */
++    private fun scalePointsToBitmap(
++        points: List<PointF>,
++        fromWidth: Int,
++        fromHeight: Int,
++        toWidth: Int,
++        toHeight: Int
++    ): List<PointF> {
++        if (fromWidth <= 0 || fromHeight <= 0 || toWidth <= 0 || toHeight <= 0) return points
++        val sx = toWidth.toFloat() / fromWidth.toFloat()
++        val sy = toHeight.toFloat() / fromHeight.toFloat()
++        return points.map { p -> PointF(p.x * sx, p.y * sy) }
++    }
++
++    private fun clampPointsToBitmap(points: List<PointF>, width: Int, height: Int): List<PointF> {
++        val maxX = (width - 1).toFloat().coerceAtLeast(0f)
++        val maxY = (height - 1).toFloat().coerceAtLeast(0f)
++        return points.map { p ->
++            PointF(p.x.coerceIn(0f, maxX), p.y.coerceIn(0f, maxY))
++        }
++    }
++
+     override fun onHostResume() {
+         startCamera()
+     }
+@@ -232,6 +269,11 @@ class LiveDetectEdgesView(context: Context) : FrameLayout(context), LifecycleEve
+         val imageCapture = imageCapture ?: return
+         
+         val context = context
++        // Freeze the on-screen quad at shutter time so a later analysis frame can't clear/replace it
++        // while ImageCapture is still saving.
++        val frozenLivePoints = lastLivePoints?.map { PointF(it.x, it.y) }
++        val frozenLiveWidth = lastLiveWidth
++        val frozenLiveHeight = lastLiveHeight
+         
+         imageCapture.takePicture(
+             ContextCompat.getMainExecutor(context),
+@@ -258,8 +300,26 @@ class LiveDetectEdgesView(context: Context) : FrameLayout(context), LifecycleEve
+                                 bitmap
+                             }
+ 
+-                            // 1. Detect edges on the captured high-res image
+-                            val detectedPoints = detector?.detect(correctedBitmap)
++                            // 1. Prefer the live overlay quad (scaled to photo), matching what the user saw.
++                            // Re-detecting on high-res often finds a tighter inner contour and crops the page.
++                            val live = frozenLivePoints
++                            val liveW = frozenLiveWidth
++                            val liveH = frozenLiveHeight
++                            val detectedPoints = if (live != null && live.size == 4 && liveW > 0 && liveH > 0) {
++                                clampPointsToBitmap(
++                                    scalePointsToBitmap(
++                                        live,
++                                        liveW,
++                                        liveH,
++                                        correctedBitmap.width,
++                                        correctedBitmap.height
++                                    ),
++                                    correctedBitmap.width,
++                                    correctedBitmap.height
++                                )
++                            } else {
++                                detector?.detect(correctedBitmap)
++                            }
+                             val quad = if (detectedPoints != null && detectedPoints.size == 4) {
+                                 Quadrilateral(detectedPoints[0], detectedPoints[1], detectedPoints[2], detectedPoints[3])
+                             } else {

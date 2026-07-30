@@ -22,6 +22,7 @@ import {
   needsManualReview,
 } from '@/src/ai/displayText';
 import {
+  AiQuotaExceededError,
   cancelAiForBook,
   cancelAiForPage,
   clearAiQuotaErrorsForBook,
@@ -32,6 +33,7 @@ import {
 } from '@/src/ai/queue';
 import { useAuth } from '@/src/auth/AuthProvider';
 import type { AiAnalysis, Book, BookPage } from '@/src/domain/types';
+import { getLibraryBook } from '@/src/library/books';
 import {
   cancelOcrForBook,
   cancelOcrForPage,
@@ -74,6 +76,7 @@ import {
   Icon,
   Loader,
   OcrStatusBadge,
+  PageImagePlaceholder,
   Row,
   ScanQueueCard,
   SegmentedControl,
@@ -173,7 +176,7 @@ export default function BookDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isLoggedIn, user, refresh: refreshAuth } = useAuth();
+  const { ready, isLoggedIn, user, refresh: refreshAuth } = useAuth();
   const [book, setBook] = useState<Book | null>(null);
   const [loading, setLoading] = useState(true);
   const [showOcr, setShowOcr] = useState(false);
@@ -196,10 +199,10 @@ export default function BookDetailScreen() {
   const aiQueue = useAiQueue();
 
   const refresh = useCallback(async () => {
-    if (!id) return;
+    if (!id || !isLoggedIn) return;
     setLoading(true);
     try {
-      const data = await getBook(id);
+      const data = await getLibraryBook(id);
       setBook(data);
     } catch (error) {
       Alert.alert('Błąd', error instanceof Error ? error.message : 'Nie znaleziono książki.');
@@ -207,12 +210,20 @@ export default function BookDetailScreen() {
     } finally {
       setLoading(false);
     }
-  }, [id, router]);
+  }, [id, isLoggedIn, router]);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (!isLoggedIn) {
+      router.replace('/login');
+    }
+  }, [ready, isLoggedIn, router]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!isLoggedIn) return;
       void refresh();
-      if (isLoggedIn) void refreshAuth();
+      void refreshAuth();
     }, [isLoggedIn, refresh, refreshAuth])
   );
 
@@ -255,12 +266,14 @@ export default function BookDetailScreen() {
 
     void (async () => {
       const remaining = await getOcrRemaining();
-      const jobs = unprocessed.map((page) => ({
-        bookId: book.id,
-        pageId: page.id,
-        pageIndex: page.index,
-        imageUri: page.imageUri,
-      }));
+      const jobs = unprocessed
+        .filter((page) => Boolean(page.imageUri?.trim()))
+        .map((page) => ({
+          bookId: book.id,
+          pageId: page.id,
+          pageIndex: page.index,
+          imageUri: page.imageUri!,
+        }));
       const allowed = remaining == null ? jobs : jobs.slice(0, remaining);
       if (allowed.length > 0) {
         enqueueOcrJobs(allowed);
@@ -367,6 +380,10 @@ export default function BookDetailScreen() {
       router.push('/login');
       return;
     }
+    if (aiRemaining != null && aiRemaining <= 0) {
+      router.push('/subscribe');
+      return;
+    }
     if (aiEligibleCount === 0) {
       Alert.alert(
         'Analiza i Korekta AI',
@@ -375,7 +392,7 @@ export default function BookDetailScreen() {
       return;
     }
     setAiMenuOpen(true);
-  }, [actionBusy, aiEligibleCount, book, isLoggedIn, router]);
+  }, [actionBusy, aiEligibleCount, aiRemaining, book, isLoggedIn, router]);
 
   const onRunBookOcr = useCallback(() => {
     if (!book) return;
@@ -384,7 +401,9 @@ export default function BookDetailScreen() {
       return;
     }
     const waiting = book.pages.filter(
-      (page) => page.ocrStatus === 'idle' || page.ocrStatus === 'error'
+      (page) =>
+        (page.ocrStatus === 'idle' || page.ocrStatus === 'error') &&
+        Boolean(page.imageUri?.trim())
     );
     if (waiting.length === 0) return;
 
@@ -404,7 +423,7 @@ export default function BookDetailScreen() {
           bookId: book.id,
           pageId: page.id,
           pageIndex: page.index,
-          imageUri: page.imageUri,
+          imageUri: page.imageUri!,
         }))
       );
     })();
@@ -418,6 +437,11 @@ export default function BookDetailScreen() {
         router.push('/login');
         return;
       }
+      if (aiRemaining != null && aiRemaining <= 0) {
+        setAiMenuOpen(false);
+        router.push('/subscribe');
+        return;
+      }
       setAiMenuOpen(false);
       const run =
         mode === 'all'
@@ -428,11 +452,15 @@ export default function BookDetailScreen() {
           await refreshAuth();
           await refresh();
         })
-        .catch(() => {
-          // Status błędów widać w AiQueueCard / badge’ach stron.
+        .catch((error) => {
+          if (error instanceof AiQuotaExceededError) {
+            router.push('/subscribe');
+            return;
+          }
+          // Inne błędy widać w AiQueueCard / badge’ach stron.
         });
     },
-    [book, isLoggedIn, refresh, refreshAuth, router]
+    [aiRemaining, book, isLoggedIn, refresh, refreshAuth, router]
   );
 
   const openPageMenu = useCallback(
@@ -468,12 +496,17 @@ export default function BookDetailScreen() {
       router.push('/login');
       return;
     }
+    if (!menuPage.imageUri?.trim()) {
+      closePageMenu();
+      Alert.alert('Odczyt tekstu', 'Brak lokalnego zdjęcia tej strony.');
+      return;
+    }
     const page = menuPage;
     closePageMenu();
     setActionBusy(true);
     void (async () => {
       try {
-        await runPageOcrExclusive(book.id, page.id, page.imageUri);
+        await runPageOcrExclusive(book.id, page.id, page.imageUri!);
         await refresh();
       } catch (error) {
         Alert.alert(
@@ -493,6 +526,11 @@ export default function BookDetailScreen() {
 
   const onRotate180 = useCallback(() => {
     if (!book || !menuPage) return;
+    if (!menuPage.imageUri?.trim()) {
+      closePageMenu();
+      Alert.alert('Obrót', 'Brak lokalnego zdjęcia tej strony.');
+      return;
+    }
     const page = menuPage;
     closePageMenu();
     setActionBusy(true);
@@ -508,7 +546,11 @@ export default function BookDetailScreen() {
           return;
         }
         try {
-          await runPageOcrExclusive(book.id, rotated.id, rotated.imageUri, { detectUpright: false });
+          if (rotated.imageUri?.trim()) {
+            await runPageOcrExclusive(book.id, rotated.id, rotated.imageUri, {
+              detectUpright: false,
+            });
+          }
         } catch (error) {
           if (error instanceof OcrQuotaExceededError || error instanceof OcrAuthRequiredError) {
             Alert.alert('Obrócono', error.message);
@@ -663,7 +705,11 @@ export default function BookDetailScreen() {
             style={StyleSheet.absoluteFill}
             onPress={() => openPageMenu(item)}
             disabled={showOcr || actionBusy}>
-            <Image source={{ uri: item.imageUri }} style={styles.image} resizeMode="contain" />
+            {item.imageUri ? (
+              <Image source={{ uri: item.imageUri }} style={styles.image} resizeMode="contain" />
+            ) : (
+              <PageImagePlaceholder />
+            )}
           </Pressable>
 
           {showOcr ? (
@@ -701,7 +747,11 @@ export default function BookDetailScreen() {
         onPress={() => openPageMenu(item)}
         disabled={actionBusy}>
         <View style={styles.gridImageFrame}>
-          <Image source={{ uri: item.imageUri }} style={styles.image} resizeMode="cover" />
+          {item.imageUri ? (
+            <Image source={{ uri: item.imageUri }} style={styles.image} resizeMode="cover" />
+          ) : (
+            <PageImagePlaceholder compact />
+          )}
           <Gradient colors={gradients.brand} style={styles.gridIndex}>
             <Text style={styles.gridIndexText}>{item.index}</Text>
           </Gradient>
@@ -731,7 +781,11 @@ export default function BookDetailScreen() {
         style={({ pressed }) => [styles.listRow, pressed && styles.pageHeaderPressed]}
         onPress={() => openPageMenu(item)}
         disabled={actionBusy}>
-        <Image source={{ uri: item.imageUri }} style={styles.listThumb} resizeMode="cover" />
+        {item.imageUri ? (
+          <Image source={{ uri: item.imageUri }} style={styles.listThumb} resizeMode="cover" />
+        ) : (
+          <PageImagePlaceholder compact style={styles.listThumb} />
+        )}
         <View style={styles.listText}>
           <Text style={styles.pageTitle}>Strona {item.index}</Text>
           {item.printedPageNumber ? (

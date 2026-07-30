@@ -14,7 +14,7 @@ class AiQuotaService
 
     public const FREE_MONTHLY_LIMIT = 5;
 
-    public const PRO_MONTHLY_LIMIT = 500;
+    public const PRO_MONTHLY_LIMIT = 750;
 
     /**
      * @return array{plan: string, period_type: string, period_key: string, limit: int, used: int, reserved: int, remaining: int}

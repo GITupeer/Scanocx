@@ -34,7 +34,7 @@ export default function PageCropScreen() {
   const { id, pageId } = useLocalSearchParams<{ id: string; pageId: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isLoggedIn } = useAuth();
+  const { ready, isLoggedIn } = useAuth();
   const editorRef = useRef<CornerCropEditorHandle>(null);
 
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -46,6 +46,14 @@ export default function PageCropScreen() {
   const [hint, setHint] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!ready) return;
+    if (!isLoggedIn) {
+      router.replace('/login');
+    }
+  }, [ready, isLoggedIn, router]);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
     let cancelled = false;
     void (async () => {
       if (!id || !pageId) return;
@@ -54,6 +62,9 @@ export default function PageCropScreen() {
         const book = await getBook(id);
         const page = book.pages.find((p) => p.id === pageId);
         if (!page) throw new Error('Nie znaleziono strony.');
+        if (!page.imageUri?.trim()) {
+          throw new Error('Brak lokalnego zdjęcia tej strony.');
+        }
         const size = await getImageSize(page.imageUri);
         if (cancelled) return;
         setImageUri(page.imageUri);
@@ -72,7 +83,7 @@ export default function PageCropScreen() {
     return () => {
       cancelled = true;
     };
-  }, [id, pageId, router]);
+  }, [id, isLoggedIn, pageId, router]);
 
   const onApply = useCallback(async () => {
     if (!id || !pageId || !imageUri || busy) return;
@@ -107,7 +118,9 @@ export default function PageCropScreen() {
 
       setHint('Odczytuję tekst…');
       try {
-        await runPageOcrExclusive(id, page.id, page.imageUri, { detectUpright: true });
+        if (page.imageUri?.trim()) {
+          await runPageOcrExclusive(id, page.id, page.imageUri, { detectUpright: true });
+        }
       } catch (error) {
         if (error instanceof OcrAuthRequiredError || error instanceof OcrQuotaExceededError) {
           Alert.alert('Kadr zapisany', error.message);

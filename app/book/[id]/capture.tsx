@@ -11,7 +11,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useCameraPermissions } from 'expo-camera';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { setStatusBarStyle } from 'expo-status-bar';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LiveDetectEdgesView, takePhoto } from 'react-native-live-detect-edges';
@@ -26,10 +26,10 @@ import {
 } from '@/src/ocr/quota';
 import {
   addPageFromCameraUri,
-  persistPageImageFile,
   replacePageFromCameraUri,
 } from '@/src/storage/books';
 import {
+  AdminScanEditor,
   Badge,
   Button,
   Gradient,
@@ -48,10 +48,70 @@ type DeferredPage = {
   imageUri: string;
 };
 
+type StepId = 'capture' | 'enhance' | 'save' | 'ocr';
+type StepStatus = 'pending' | 'active' | 'done' | 'skipped';
+
+type ProcessStep = {
+  id: StepId;
+  label: string;
+  detail?: string;
+  status: StepStatus;
+};
+
+type ProcessProgress = {
+  title: string;
+  steps: ProcessStep[];
+};
+
 function toFileUri(path: string): string {
   if (!path) return path;
   if (path.startsWith('file://') || path.startsWith('content://')) return path;
   return `file://${path}`;
+}
+
+function buildProcessSteps(opts: {
+  fromGallery?: boolean;
+  isReplace: boolean;
+  ocrMode: 'live' | 'deferred' | 'none';
+}): ProcessStep[] {
+  const ocrStep: ProcessStep =
+    opts.ocrMode === 'live'
+      ? { id: 'ocr', label: 'Odczyt tekstu', status: 'pending' }
+      : opts.ocrMode === 'deferred'
+        ? { id: 'ocr', label: 'Odczyt tekstu', status: 'skipped', detail: 'po zakończeniu' }
+        : { id: 'ocr', label: 'Odczyt tekstu', status: 'skipped', detail: 'pominięty' };
+
+  return [
+    {
+      id: 'capture',
+      label: opts.fromGallery ? 'Wybór z galerii' : 'Zdjęcie',
+      status: 'pending',
+    },
+    { id: 'enhance', label: 'Poprawa skanu', status: 'pending' },
+    {
+      id: 'save',
+      label: opts.isReplace ? 'Podmiana strony' : 'Zapis strony',
+      status: 'pending',
+    },
+    ocrStep,
+  ];
+}
+
+function StepGlyph({ status }: { status: StepStatus }) {
+  if (status === 'active') {
+    return <ActivityIndicator size="small" color={colors.mint} />;
+  }
+  if (status === 'done') {
+    return <Icon name="checkCircle" size={18} color={colors.mint} />;
+  }
+  if (status === 'skipped') {
+    return (
+      <View style={styles.stepDotSkipped}>
+        <View style={styles.stepDotSkippedInner} />
+      </View>
+    );
+  }
+  return <View style={styles.stepDotPending} />;
 }
 
 export default function CaptureScreen() {
@@ -59,7 +119,7 @@ export default function CaptureScreen() {
   const isReplace = typeof replacePageId === 'string' && replacePageId.length > 0;
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isLoggedIn } = useAuth();
+  const { ready, isLoggedIn } = useAuth();
   const [permission, requestPermission] = useCameraPermissions();
 
   const ocrHintAlertedRef = useRef(false);
@@ -67,20 +127,83 @@ export default function CaptureScreen() {
   const deferredPagesRef = useRef<DeferredPage[]>([]);
   /** Aktualna wartość trybu — bez przebudowy callbacków przy każdym przełączeniu. */
   const processLiveRef = useRef(true);
+  const adminModeRef = useRef(false);
+  const progressClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [busy, setBusy] = useState(false);
-  const [hint, setHint] = useState<string | null>(null);
+  const [progress, setProgress] = useState<ProcessProgress | null>(null);
   const [sessionCount, setSessionCount] = useState(0);
   const [flash, setFlash] = useState(false);
   const [nativeMissing, setNativeMissing] = useState(false);
-  /** true = podbijanie kolorów + OCR od razu po zdjęciu; false = dopiero po zakończeniu. */
+  /** true = OCR od razu po zdjęciu; false = OCR dopiero po zakończeniu sesji. */
   const [processLive, setProcessLive] = useState(true);
   processLiveRef.current = processLive;
+  /** Admin Mode: surowy kadr + ręczna korekcja, bez OCR / auto-enhance w tle. */
+  const [adminMode, setAdminMode] = useState(false);
+  adminModeRef.current = adminMode;
+  const [adminDraftUri, setAdminDraftUri] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (!isLoggedIn) {
+      router.replace('/login');
+    }
+  }, [ready, isLoggedIn, router]);
+
+  const clearProgressSoon = useCallback((delayMs = 1400) => {
+    if (progressClearTimerRef.current) clearTimeout(progressClearTimerRef.current);
+    progressClearTimerRef.current = setTimeout(() => {
+      setProgress(null);
+      progressClearTimerRef.current = null;
+    }, delayMs);
+  }, []);
+
+  const startProgress = useCallback(
+    (opts: { fromGallery?: boolean; title?: string; ocrMode?: 'live' | 'deferred' | 'none' }) => {
+      if (progressClearTimerRef.current) {
+        clearTimeout(progressClearTimerRef.current);
+        progressClearTimerRef.current = null;
+      }
+      const ocrMode =
+        opts.ocrMode ??
+        (adminModeRef.current ? 'none' : processLiveRef.current ? 'live' : 'deferred');
+      const steps = buildProcessSteps({
+        fromGallery: opts.fromGallery,
+        isReplace,
+        ocrMode,
+      });
+      steps[0] = { ...steps[0], status: 'active' };
+      setProgress({
+        title: opts.title ?? (isReplace ? 'Podmiana strony' : 'Przetwarzanie strony'),
+        steps,
+      });
+    },
+    [isReplace]
+  );
+
+  const patchStep = useCallback((id: StepId, status: StepStatus, detail?: string) => {
+    setProgress((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        steps: prev.steps.map((step) => {
+          if (step.id !== id) return step;
+          const next: ProcessStep = { ...step, status };
+          if (detail !== undefined) next.detail = detail;
+          else if (status === 'active' || status === 'done') delete next.detail;
+          return next;
+        }),
+      };
+    });
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
       setStatusBarStyle('light');
-      return () => setStatusBarStyle('dark');
+      return () => {
+        setStatusBarStyle('dark');
+        if (progressClearTimerRef.current) clearTimeout(progressClearTimerRef.current);
+      };
     }, [])
   );
 
@@ -105,31 +228,31 @@ export default function CaptureScreen() {
       if (!id) return;
       if (!isLoggedIn) {
         notifyOcrSkipped('guest');
-        setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
+        patchStep('ocr', 'skipped', 'wymaga konta');
         return;
       }
       if (!(await canRunOcr())) {
         notifyOcrSkipped('quota');
-        setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
+        patchStep('ocr', 'skipped', 'limit');
         return;
       }
-      setHint(`Rozpoznawanie tekstu · strona ${pageIndex}…`);
+      patchStep('ocr', 'active');
       try {
         await runPageOcrExclusive(id, pageId, imageUri);
-        setHint(`Gotowe · strona ${pageIndex}`);
+        patchStep('ocr', 'done');
       } catch (error) {
         if (error instanceof OcrAuthRequiredError) {
           notifyOcrSkipped('guest');
-          setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
+          patchStep('ocr', 'skipped', 'wymaga konta');
         } else if (error instanceof OcrQuotaExceededError) {
           notifyOcrSkipped('quota');
-          setHint(`Zapisano · bez OCR · strona ${pageIndex}`);
+          patchStep('ocr', 'skipped', 'limit');
         } else {
           throw error;
         }
       }
     },
-    [id, isLoggedIn, notifyOcrSkipped]
+    [id, isLoggedIn, notifyOcrSkipped, patchStep]
   );
 
   const processDeferredPages = useCallback(async () => {
@@ -138,48 +261,54 @@ export default function CaptureScreen() {
     if (pending.length === 0) return;
 
     deferredPagesRef.current = [];
-    const enhanced: DeferredPage[] = [];
 
-    for (let i = 0; i < pending.length; i++) {
-      const item = pending[i];
-      setHint(`Podbijam kontrast · ${i + 1}/${pending.length}…`);
-      try {
-        const clearUri = await enhanceScanClarity(item.imageUri);
-        const nextUri = await persistPageImageFile(id, item.pageId, clearUri);
-        enhanced.push({ ...item, imageUri: nextUri });
-      } catch {
-        enhanced.push(item);
-      }
+    if (progressClearTimerRef.current) {
+      clearTimeout(progressClearTimerRef.current);
+      progressClearTimerRef.current = null;
     }
+
+    setProgress({
+      title: `Kończenie · ${pending.length} ${pending.length === 1 ? 'strona' : 'stron'}`,
+      steps: [
+        {
+          id: 'ocr',
+          label: 'Kolejka OCR',
+          status: 'active',
+        },
+      ],
+    });
 
     if (!isLoggedIn) {
       notifyOcrSkipped('guest');
-      setHint(`Zapisano · ${enhanced.length} bez OCR`);
+      patchStep('ocr', 'skipped', 'wymaga konta');
+      clearProgressSoon();
       return;
     }
     if (!(await canRunOcr())) {
       notifyOcrSkipped('quota');
-      setHint(`Zapisano · ${enhanced.length} bez OCR`);
+      patchStep('ocr', 'skipped', 'limit');
+      clearProgressSoon();
       return;
     }
 
     const queued = enqueueOcrJobs(
-      enhanced.map((page) => ({
+      pending.map((page) => ({
         bookId: id,
         pageId: page.pageId,
         pageIndex: page.pageIndex,
         imageUri: page.imageUri,
       }))
     );
-    setHint(
-      queued > 0
-        ? `Kolejka OCR · ${queued} ${queued === 1 ? 'strona' : 'stron'}`
-        : `Gotowe · ${enhanced.length}`
+    patchStep(
+      'ocr',
+      'done',
+      queued > 0 ? `${queued} w kolejce` : undefined
     );
-  }, [id, isLoggedIn, notifyOcrSkipped]);
+    clearProgressSoon(900);
+  }, [clearProgressSoon, id, isLoggedIn, notifyOcrSkipped, patchStep]);
 
   const leaveCapture = useCallback(async () => {
-    if (busy) return;
+    if (busy || adminDraftUri) return;
     if (deferredPagesRef.current.length > 0) {
       setBusy(true);
       try {
@@ -189,65 +318,125 @@ export default function CaptureScreen() {
           'Błąd',
           error instanceof Error ? error.message : 'Nie udało się dokończyć przetwarzania.'
         );
+        setProgress(null);
       } finally {
         setBusy(false);
       }
     }
     router.back();
-  }, [busy, processDeferredPages, router]);
+  }, [adminDraftUri, busy, processDeferredPages, router]);
+
+  const saveProcessedUri = useCallback(
+    async (saveUriPath: string, opts?: { skipOcr?: boolean }) => {
+      if (!id) return;
+      const skipOcr = opts?.skipOcr === true;
+
+      patchStep('save', 'active');
+
+      if (isReplace) {
+        const { page } = await replacePageFromCameraUri(id, replacePageId, saveUriPath);
+        patchStep('save', 'done');
+        if (!skipOcr) {
+          if (page.imageUri?.trim()) {
+            await tryOcr(page.index, page.id, page.imageUri);
+          }
+        } else {
+          patchStep('ocr', 'skipped', 'pominięty');
+        }
+        clearProgressSoon(700);
+        router.replace(`/book/${id}/page/${page.id}`);
+        return;
+      }
+
+      const { page } = await addPageFromCameraUri(id, saveUriPath);
+      setSessionCount((n) => n + 1);
+      setProgress((prev) =>
+        prev
+          ? { ...prev, title: `Strona ${page.index}` }
+          : prev
+      );
+      patchStep('save', 'done');
+
+      if (skipOcr) {
+        patchStep('ocr', 'skipped', 'pominięty');
+        clearProgressSoon();
+        return;
+      }
+
+      const live = processLiveRef.current;
+      if (live) {
+        if (page.imageUri?.trim()) {
+          await tryOcr(page.index, page.id, page.imageUri);
+        }
+      } else if (page.imageUri?.trim()) {
+        deferredPagesRef.current.push({
+          pageId: page.id,
+          pageIndex: page.index,
+          imageUri: page.imageUri,
+        });
+        patchStep('ocr', 'skipped', 'po zakończeniu');
+      } else {
+        patchStep('ocr', 'skipped', 'brak zdjęcia');
+      }
+      clearProgressSoon();
+    },
+    [clearProgressSoon, id, isReplace, patchStep, replacePageId, router, tryOcr]
+  );
 
   const saveUri = useCallback(
     async (rawUri: string) => {
       if (!id) return;
       const uri = toFileUri(rawUri);
-      const live = processLiveRef.current;
+
+      if (adminModeRef.current) {
+        setProgress(null);
+        // Chwila na domknięcie natywnego takePhoto zanim Modal przykryje kamerę.
+        setTimeout(() => setAdminDraftUri(uri), 80);
+        return;
+      }
+
       setBusy(true);
       try {
-        let saveUriPath = uri;
-        if (live) {
-          setHint('Podbijam kontrast…');
-          saveUriPath = await enhanceScanClarity(uri);
-        }
-
-        if (isReplace) {
-          // Podmiana kończy sesję od razu — zawsze dociągamy kontrast + OCR przed wyjściem.
-          let finalUri = saveUriPath;
-          if (!live) {
-            setHint('Podbijam kontrast…');
-            finalUri = await enhanceScanClarity(uri);
-          }
-          setHint('Podmieniam…');
-          const { page } = await replacePageFromCameraUri(id, replacePageId, finalUri);
-          await tryOcr(page.index, page.id, page.imageUri);
-          router.replace(`/book/${id}/page/${page.id}`);
-          return;
-        }
-
-        setHint('Zapisuję…');
-        const { page } = await addPageFromCameraUri(id, saveUriPath);
-        setSessionCount((n) => n + 1);
-
-        if (live) {
-          await tryOcr(page.index, page.id, page.imageUri);
-        } else {
-          deferredPagesRef.current.push({
-            pageId: page.id,
-            pageIndex: page.index,
-            imageUri: page.imageUri,
-          });
-          setHint(`Zapisano · strona ${page.index}`);
-        }
+        patchStep('capture', 'done');
+        patchStep('enhance', 'active');
+        // Enhance zawsze od razu po zdjęciu — niezależnie od processLive (OCR live / szybkie skanowanie).
+        const enhanced = await enhanceScanClarity(uri, { mode: 'document' });
+        patchStep('enhance', 'done');
+        await saveProcessedUri(enhanced);
       } catch (error) {
         Alert.alert(
           'Błąd',
           error instanceof Error ? error.message : 'Nie udało się zapisać skanu.'
         );
-        setHint(null);
+        setProgress(null);
       } finally {
         setBusy(false);
       }
     },
-    [id, isReplace, replacePageId, router, tryOcr]
+    [id, patchStep, saveProcessedUri]
+  );
+
+  const saveAdminDraft = useCallback(
+    async (editedUri: string) => {
+      if (!id) return;
+      setBusy(true);
+      startProgress({ title: 'Zapis Admin Mode', ocrMode: 'none' });
+      patchStep('capture', 'done');
+      patchStep('enhance', 'done', 'ręcznie');
+      try {
+        await saveProcessedUri(toFileUri(editedUri), { skipOcr: true });
+        setAdminDraftUri(null);
+      } catch (error) {
+        Alert.alert(
+          'Błąd',
+          error instanceof Error ? error.message : 'Nie udało się zapisać skanu.'
+        );
+        setProgress(null);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [id, patchStep, saveProcessedUri, startProgress]
   );
 
   const onShutter = useCallback(async () => {
@@ -255,14 +444,18 @@ export default function CaptureScreen() {
     shutterLockRef.current = true;
     setFlash(true);
     setTimeout(() => setFlash(false), 70);
-    setHint(isReplace ? 'Skanuję…' : 'Skanuję stronę…');
+    if (!adminModeRef.current) {
+      startProgress({
+        title: isReplace ? 'Podmiana strony' : 'Przetwarzanie strony',
+      });
+    }
 
     try {
       const result = await takePhoto();
       const cropped = result.image?.uri ?? result.originalImage?.uri;
       if (!cropped) {
         Alert.alert('Skan', 'Nie udało się zrobić zdjęcia.');
-        setHint(null);
+        setProgress(null);
         return;
       }
       await saveUri(cropped);
@@ -277,11 +470,11 @@ export default function CaptureScreen() {
       } else {
         Alert.alert('Błąd', message || 'Nie udało się zeskanować strony.');
       }
-      setHint(null);
+      setProgress(null);
     } finally {
       shutterLockRef.current = false;
     }
-  }, [busy, isReplace, saveUri]);
+  }, [busy, isReplace, saveUri, startProgress]);
 
   const onGallery = useCallback(async () => {
     if (busy) return;
@@ -290,8 +483,14 @@ export default function CaptureScreen() {
       quality: 1,
     });
     if (result.canceled || !result.assets[0]?.uri) return;
+    if (!adminModeRef.current) {
+      startProgress({
+        fromGallery: true,
+        title: isReplace ? 'Podmiana strony' : 'Przetwarzanie strony',
+      });
+    }
     await saveUri(result.assets[0].uri);
-  }, [busy, saveUri]);
+  }, [busy, isReplace, saveUri, startProgress]);
 
   if (!permission) {
     return <View style={styles.root} />;
@@ -315,8 +514,8 @@ export default function CaptureScreen() {
     );
   }
 
-  const canLeave = !busy;
-  const shutterLocked = busy;
+  const canLeave = !busy && !adminDraftUri;
+  const shutterLocked = busy || Boolean(adminDraftUri);
 
   return (
     <View style={styles.root}>
@@ -351,44 +550,96 @@ export default function CaptureScreen() {
           />
           <View style={styles.topCenter}>
             <Badge
-              label={isReplace ? 'Podmiana strony' : 'Skanowanie'}
+              label={adminMode ? 'Admin Mode' : isReplace ? 'Podmiana strony' : 'Skanowanie'}
               tone="glass"
-              icon="scan"
+              icon={adminMode ? 'tune' : 'scan'}
               size="md"
             />
           </View>
-          <IconButton
-            name={processLive ? 'bolt' : 'clock'}
-            accessibilityLabel={
-              processLive
-                ? 'Przetwarzanie na żywo włączone. Wyłącz, aby skanować szybciej.'
-                : 'Szybkie skanowanie. Włącz przetwarzanie na żywo.'
-            }
-            variant="glass"
-            size={44}
-            round
-            disabled={busy}
-            tint={processLive ? colors.mint : 'rgba(255,255,255,0.55)'}
-            onPress={() => setProcessLive((v) => !v)}
-          />
+          <View style={styles.topRight}>
+            {!adminMode ? (
+              <IconButton
+                name={processLive ? 'bolt' : 'clock'}
+                accessibilityLabel={
+                  processLive
+                    ? 'OCR na żywo włączone. Wyłącz, aby skanować szybciej.'
+                    : 'Szybkie skanowanie. Włącz OCR na żywo.'
+                }
+                variant="glass"
+                size={44}
+                round
+                disabled={busy}
+                tint={processLive ? colors.mint : 'rgba(255,255,255,0.55)'}
+                onPress={() => setProcessLive((v) => !v)}
+              />
+            ) : null}
+            <IconButton
+              name="tune"
+              accessibilityLabel={
+                adminMode
+                  ? 'Admin Mode włączony. Wyłącz, aby wrócić do automatycznego przetwarzania.'
+                  : 'Włącz Admin Mode — ręczna korekcja bez OCR.'
+              }
+              variant="glass"
+              size={44}
+              round
+              disabled={busy}
+              tint={adminMode ? colors.mint : 'rgba(255,255,255,0.55)'}
+              onPress={() => setAdminMode((v) => !v)}
+            />
+          </View>
         </View>
 
         <View pointerEvents="none" style={[styles.statusChip, { top: insets.top + 68 }]}>
-          <View style={[styles.statusDot, processLive ? styles.statusDotOn : styles.statusDotOff]} />
+          <View
+            style={[
+              styles.statusDot,
+              adminMode || processLive ? styles.statusDotOn : styles.statusDotOff,
+            ]}
+          />
           <Text style={styles.statusText}>
-            {processLive
-              ? 'Celuj w jedną stronę książki'
-              : 'Szybkie skanowanie · Auto po zakończeniu'}
+            {adminMode
+              ? 'Admin Mode · ręczna korekcja, bez OCR'
+              : processLive
+                ? 'Celuj w jedną stronę książki'
+                : 'Szybkie skanowanie · OCR po zakończeniu'}
           </Text>
         </View>
 
-        {hint ? (
-          <View pointerEvents="none" style={styles.toast}>
-            <Icon name="check" size={14} color={colors.white} />
-            <Text style={styles.toastText}>
-              {hint}
-              {!isReplace && sessionCount > 0 ? ` · zdjęć: ${sessionCount}` : ''}
-            </Text>
+        {progress ? (
+          <View pointerEvents="none" style={styles.progressCard}>
+            <View style={styles.progressHeader}>
+              <Text style={styles.progressTitle}>{progress.title}</Text>
+              {!isReplace && sessionCount > 0 ? (
+                <Text style={styles.progressMeta}>zdjęć: {sessionCount}</Text>
+              ) : null}
+            </View>
+            <View style={styles.progressList}>
+              {progress.steps.map((step) => {
+                const isActive = step.status === 'active';
+                const isDone = step.status === 'done';
+                const isSkipped = step.status === 'skipped';
+                return (
+                  <View key={step.id} style={styles.progressRow}>
+                    <View style={styles.progressGlyph}>
+                      <StepGlyph status={step.status} />
+                    </View>
+                    <Text
+                      style={[
+                        styles.progressLabel,
+                        isActive && styles.progressLabelActive,
+                        isDone && styles.progressLabelDone,
+                        isSkipped && styles.progressLabelSkipped,
+                      ]}>
+                      {step.label}
+                    </Text>
+                    {step.detail ? (
+                      <Text style={styles.progressDetail}>{step.detail}</Text>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
           </View>
         ) : null}
       </View>
@@ -401,12 +652,12 @@ export default function CaptureScreen() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Wybierz z galerii"
-          disabled={busy}
+          disabled={busy || Boolean(adminDraftUri)}
           onPress={() => void onGallery()}
           style={({ pressed }) => [
             styles.sideButton,
             pressed && styles.sidePressed,
-            busy && styles.disabled,
+            (busy || Boolean(adminDraftUri)) && styles.disabled,
           ]}>
           <Icon name="gallery" size={22} color={colors.white} />
           <Text style={styles.sideLabel}>Galeria</Text>
@@ -445,6 +696,19 @@ export default function CaptureScreen() {
           </Text>
         </Pressable>
       </Gradient>
+
+      {adminDraftUri ? (
+        <AdminScanEditor
+          uri={adminDraftUri}
+          busy={busy}
+          onCancel={() => {
+            if (busy) return;
+            setAdminDraftUri(null);
+            setProgress(null);
+          }}
+          onSave={(editedUri) => void saveAdminDraft(editedUri)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -496,6 +760,11 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
   },
+  topRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+  },
   statusChip: {
     position: 'absolute',
     alignSelf: 'center',
@@ -525,27 +794,93 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
-  toast: {
+  progressCard: {
     position: 'absolute',
     left: space.xl,
     right: space.xl,
     bottom: space.xl,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: space.sm,
-    backgroundColor: 'rgba(10, 12, 20, 0.82)',
-    borderRadius: radius.pill,
+    backgroundColor: 'rgba(10, 12, 20, 0.88)',
+    borderRadius: radius.xl,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.14)',
     paddingHorizontal: space.lg,
     paddingVertical: space.md,
+    gap: space.sm,
   },
-  toastText: {
+  progressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.md,
+    marginBottom: 2,
+  },
+  progressTitle: {
+    flex: 1,
     color: colors.white,
-    textAlign: 'center',
     fontSize: 13.5,
+    fontWeight: '800',
+  },
+  progressMeta: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  progressList: {
+    gap: 8,
+  },
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  progressGlyph: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepDotPending: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.28)',
+  },
+  stepDotSkipped: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepDotSkippedInner: {
+    width: 7,
+    height: 1.5,
+    borderRadius: 1,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  progressLabel: {
+    flex: 1,
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  progressLabelActive: {
+    color: colors.white,
     fontWeight: '700',
+  },
+  progressLabelDone: {
+    color: 'rgba(255,255,255,0.92)',
+  },
+  progressLabelSkipped: {
+    color: 'rgba(255,255,255,0.42)',
+  },
+  progressDetail: {
+    color: 'rgba(255,255,255,0.42)',
+    fontSize: 11.5,
+    fontWeight: '600',
   },
   bar: {
     flexDirection: 'row',

@@ -115,6 +115,33 @@ export type AiUsageItem = {
   total_tokens?: number;
 };
 
+/** Metadane strony z backendu (bez obrazu — zdjęcia lokalne). */
+export type ApiBookPage = {
+  id: number;
+  local_id: string;
+  index: number;
+  ocr_text: string;
+  ai_text: string | null;
+  ai_status: string;
+  ai_meta: AiBatchJobMeta | Record<string, unknown> | null;
+  printed_page_number: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type ApiBookSummary = {
+  id: number;
+  local_id: string;
+  title: string;
+  page_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type ApiBook = ApiBookSummary & {
+  pages: ApiBookPage[];
+};
+
 export class ApiError extends Error {
   constructor(
     message: string,

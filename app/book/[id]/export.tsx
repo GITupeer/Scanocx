@@ -29,7 +29,7 @@ import {
   type ExportDestination,
   type ExportFormat,
 } from '@/src/export';
-import { getBook } from '@/src/storage/books';
+import { getLibraryBook } from '@/src/library/books';
 import {
   AiQueueCard,
   BusyOverlay,
@@ -108,7 +108,7 @@ export default function ExportScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { user, isLoggedIn } = useAuth();
+  const { ready: authReady, user, isLoggedIn } = useAuth();
   const exportQuota = useExportQuota();
   const [book, setBook] = useState<Book | null>(null);
   const [loading, setLoading] = useState(true);
@@ -119,6 +119,13 @@ export default function ExportScreen() {
     destination: ExportDestination;
     filename: string;
   } | null>(null);
+
+  useEffect(() => {
+    if (!authReady) return;
+    if (!isLoggedIn) {
+      router.replace('/login');
+    }
+  }, [authReady, isLoggedIn, router]);
 
   useFocusEffect(
     useCallback(() => {
@@ -131,10 +138,10 @@ export default function ExportScreen() {
   );
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || !isLoggedIn) return;
     void (async () => {
       try {
-        const data = await getBook(id);
+        const data = await getLibraryBook(id);
         setBook(data);
       } catch (error) {
         Alert.alert('Błąd', error instanceof Error ? error.message : 'Nie znaleziono książki.');
@@ -143,7 +150,7 @@ export default function ExportScreen() {
         setLoading(false);
       }
     })();
-  }, [id, router]);
+  }, [id, isLoggedIn, router]);
 
   const promptLogin = () => {
     Alert.alert('Wymagane logowanie', 'Eksport wymaga konta. Zaloguj się, aby zapisać TXT, PDF lub eBook.', [

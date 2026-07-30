@@ -314,6 +314,14 @@ export default function ProfileScreen() {
                   chevron
                   onPress={() => router.push('/usage')}
                 />
+                <Divider inset={space.lg + 36 + space.md} />
+                <Row
+                  icon="scan"
+                  label="Test preprocess / OCR"
+                  detail="UVDoc · enhance · ML Kit"
+                  chevron
+                  onPress={() => router.push('/dev/dewarp')}
+                />
                 {isAdmin ? (
                   <>
                     <Divider inset={space.lg + 36 + space.md} />

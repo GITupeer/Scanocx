@@ -41,7 +41,7 @@ const FEATURES: Feature[] = [
     icon: "ai",
     title: "Analiza i Korekta AI",
     free: "5 stron / miesiąc",
-    pro: "500 stron / miesiąc",
+    pro: "750 stron / miesiąc",
   },
   {
     icon: "scan",
@@ -157,7 +157,7 @@ export default function SubscribeScreen() {
             <View style={styles.proActiveText}>
               <Text style={styles.proActiveTitle}>Subskrypcja aktywna</Text>
               <Text style={styles.proActiveDetail}>
-                Korzystasz z limitu Pro: 500 stron AI miesięcznie i
+                Korzystasz z limitu Pro: 750 stron AI miesięcznie i
                 nielimitowanego OCR.
               </Text>
             </View>

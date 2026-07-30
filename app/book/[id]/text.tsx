@@ -4,9 +4,10 @@ import { Alert, ScrollView, Share, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getDisplayText } from "@/src/ai/displayText";
+import { useAuth } from "@/src/auth/AuthProvider";
 import type { Book } from "@/src/domain/types";
 import { buildBookPlainText } from "@/src/export";
-import { getBook } from "@/src/storage/books";
+import { getLibraryBook } from "@/src/library/books";
 import {
   AiQueueCard,
   AppBar,
@@ -32,14 +33,22 @@ export default function BookTextScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { ready, isLoggedIn } = useAuth();
   const [book, setBook] = useState<Book | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!id) return;
+    if (!ready) return;
+    if (!isLoggedIn) {
+      router.replace("/login");
+    }
+  }, [ready, isLoggedIn, router]);
+
+  useEffect(() => {
+    if (!id || !isLoggedIn) return;
     void (async () => {
       try {
-        const data = await getBook(id);
+        const data = await getLibraryBook(id);
         setBook(data);
       } catch (error) {
         Alert.alert(
@@ -51,7 +60,7 @@ export default function BookTextScreen() {
         setLoading(false);
       }
     })();
-  }, [id, router]);
+  }, [id, isLoggedIn, router]);
 
   const fullText = useMemo(() => (book ? buildFullText(book) : ""), [book]);
 

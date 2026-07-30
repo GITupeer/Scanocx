@@ -6,6 +6,7 @@ import { isApiConfigured } from '@/src/ai/config';
 import * as api from '@/src/api/endpoints';
 import { clearAuthToken, getAuthToken, setAuthToken } from '@/src/api/token';
 import type { ApiUser } from '@/src/api/types';
+import { migrateLocalBooksToRemote } from '@/src/library/books';
 import { tryResumeOcrQueue } from '@/src/ocr/queue';
 import { applyOcrQuotaFromUser, clearOcrQuota, refreshOcrQuota } from '@/src/ocr/quota';
 import { clearExportQuota, applyExportQuotaFromUser, refreshExportQuota } from '@/src/export/quota';
@@ -64,7 +65,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!ready || user == null) return;
-    void resumePendingCloudAi().catch(() => undefined);
+    void (async () => {
+      await migrateLocalBooksToRemote().catch(() => undefined);
+      await resumePendingCloudAi().catch(() => undefined);
+    })();
   }, [ready, user?.id]);
 
   useEffect(() => {
@@ -88,6 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(result.user);
     applyOcrQuotaFromUser(result.user.ocr_quota);
     applyExportQuotaFromUser(result.user.export_quota, result.user.id);
+    await migrateLocalBooksToRemote().catch(() => undefined);
     return result.user;
   }, []);
 
@@ -102,6 +107,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(result.user);
     applyOcrQuotaFromUser(result.user.ocr_quota);
     applyExportQuotaFromUser(result.user.export_quota, result.user.id);
+    await migrateLocalBooksToRemote().catch(() => undefined);
     return result.user;
   }, []);
 

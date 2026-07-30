@@ -2,6 +2,7 @@ export { AppBar } from './AppBar';
 export { AuroraBackdrop } from './Backdrop';
 export { Badge, OcrStatusBadge, AiStatusBadge, type BadgeTone } from './Badge';
 export { BookCover } from './BookCover';
+export { PageImagePlaceholder } from './PageImagePlaceholder';
 export { BottomNav, useBottomNavInset, type NavTab } from './BottomNav';
 export { Button, IconButton, type ButtonSize, type ButtonVariant } from './Button';
 export { Card, Divider, Row, SectionHeader } from './Card';
@@ -13,6 +14,11 @@ export { Icon, type IconName } from './Icon';
 export { BusyOverlay, Loader } from './Loader';
 export { AiPulse, FadeInUp, HomeHeroOrbs, ScanBeam } from './Motion';
 export { ProgressBar } from './Progress';
+export {
+  isExpoBlurAvailable,
+  SafeBlurTargetView,
+  SafeBlurView,
+} from './SafeBlur';
 export { AiPromoCard } from './AiPromoCard';
 export { AiLimitPromoCard } from './AiLimitPromoCard';
 export { OcrPromoCard } from './OcrPromoCard';
@@ -31,6 +37,7 @@ export {
   type CropPoint,
   type CropQuad,
 } from './CornerCropEditor';
+export { AdminScanEditor, type AdminEnhanceParams } from './AdminScanEditor';
 export {
   BOTTOM_NAV_HEIGHT,
   colors,

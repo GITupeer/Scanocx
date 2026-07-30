@@ -11,6 +11,15 @@ import type {
 } from '@/src/domain/types';
 import { ensurePortraitUri, rotateUri } from '@/src/images/ensurePortrait';
 import {
+  deleteBookFromRemote,
+  deletePageFromRemote,
+  hasAuthToken,
+  pushBookMetaToRemote,
+  pushBookToRemote,
+  pushPageOcrToRemote,
+  pushPageToRemote,
+} from '@/src/library/remote';
+import {
   scheduleBookSearchIndex,
   scheduleRemoveBookSearchIndex,
 } from '@/src/search/index';
@@ -24,6 +33,10 @@ import {
   pageImagePath,
 } from '@/src/storage/paths';
 
+function syncRemoteQuietly(task: Promise<unknown>): void {
+  void task.catch(() => undefined);
+}
+
 function normalizePage(page: BookPage): BookPage {
   const ocrStatus = page.ocrStatus ?? 'idle';
   const rawQuality = page.ocrQuality ?? null;
@@ -33,6 +46,7 @@ function normalizePage(page: BookPage): BookPage {
       : null;
   return {
     ...page,
+    imageUri: page.imageUri?.trim() ? page.imageUri : null,
     ocrText: page.ocrText ?? '',
     aiText: page.aiText ?? '',
     printedPageNumber: page.printedPageNumber ?? null,
@@ -121,6 +135,19 @@ async function writeBook(book: Book): Promise<Book> {
   return updated;
 }
 
+/** Zapisuje meta bez nadpisywania updatedAt (shell z backendu). */
+export async function writeBookShell(book: Book): Promise<Book> {
+  const normalized = normalizeBook(book);
+  await ensureDir(bookDir(normalized.id));
+  await ensureDir(bookPagesDir(normalized.id));
+  await FileSystem.writeAsStringAsync(
+    bookMetaPath(normalized.id),
+    JSON.stringify(normalized, null, 2)
+  );
+  scheduleBookSearchIndex(normalized);
+  return normalized;
+}
+
 export async function listBooks(): Promise<BookSummary[]> {
   await ensureDir(booksRoot());
   const entries = await FileSystem.readDirectoryAsync(booksRoot());
@@ -159,13 +186,26 @@ export async function createBook(title: string): Promise<Book> {
     updatedAt: now,
     pages: [],
   };
-  return writeBook(book);
+  const saved = await writeBook(book);
+  try {
+    if (!(await hasAuthToken())) {
+      throw new Error('Zaloguj się, aby utworzyć książkę.');
+    }
+    await pushBookToRemote(saved);
+  } catch (error) {
+    await FileSystem.deleteAsync(bookDir(saved.id), { idempotent: true });
+    scheduleRemoveBookSearchIndex(saved.id);
+    throw error;
+  }
+  return saved;
 }
 
 export async function renameBook(bookId: string, title: string): Promise<Book> {
   const book = await readBook(bookId);
   book.title = title.trim() || book.title;
-  return writeBook(book);
+  const saved = await writeBook(book);
+  syncRemoteQuietly(pushBookMetaToRemote(saved.id, saved.title));
+  return saved;
 }
 
 /** Kopiuje zdjęcie jako okładkę książki (lokalny JPEG). */
@@ -199,6 +239,7 @@ export async function deleteBook(bookId: string): Promise<void> {
     await FileSystem.deleteAsync(dir, { idempotent: true });
   }
   scheduleRemoveBookSearchIndex(bookId);
+  syncRemoteQuietly(deleteBookFromRemote(bookId));
 }
 
 export async function addPageFromImage(
@@ -233,6 +274,7 @@ export async function addPageFromImage(
 
   book.pages = [...book.pages, page];
   const saved = await writeBook(book);
+  syncRemoteQuietly(pushPageToRemote(bookId, page));
   return { book: saved, page };
 }
 
@@ -265,6 +307,7 @@ export async function addPageFromCameraUri(
 
   book.pages = [...book.pages, page];
   const saved = await writeBook(book);
+  syncRemoteQuietly(pushPageToRemote(bookId, page));
   return { book: saved, page };
 }
 
@@ -301,7 +344,12 @@ export async function updatePageOcr(
       ...(shouldResetAi ? freshAiFields() : {}),
     };
   });
-  return writeBook(book);
+  const saved = await writeBook(book);
+  const updatedPage = saved.pages.find((p) => p.id === pageId);
+  if (updatedPage) {
+    syncRemoteQuietly(pushPageOcrToRemote(bookId, updatedPage));
+  }
+  return saved;
 }
 
 export async function updatePageAi(
@@ -354,7 +402,14 @@ export async function updatePagesAi(
           : (page.printedPageNumber ?? null),
     };
   });
-  return writeBook(book);
+  const saved = await writeBook(book);
+  for (const patch of patches) {
+    const updatedPage = saved.pages.find((p) => p.id === patch.pageId);
+    if (updatedPage) {
+      syncRemoteQuietly(pushPageOcrToRemote(bookId, updatedPage));
+    }
+  }
+  return saved;
 }
 
 export async function updatePageText(
@@ -423,6 +478,7 @@ export async function replacePageImage(
 
   book.pages = book.pages.map((p) => (p.id === pageId ? page : p));
   const saved = await writeBook(book);
+  syncRemoteQuietly(pushPageToRemote(bookId, page));
   return { book: saved, page };
 }
 
@@ -459,6 +515,7 @@ export async function replacePageFromCameraUri(
 
   book.pages = book.pages.map((p) => (p.id === pageId ? page : p));
   const saved = await writeBook(book);
+  syncRemoteQuietly(pushPageToRemote(bookId, page));
   return { book: saved, page };
 }
 
@@ -514,6 +571,9 @@ export async function rotatePageImage180(
   if (!existing) {
     throw new Error(`Page not found: ${pageId}`);
   }
+  if (!existing.imageUri) {
+    throw new Error('Brak lokalnego zdjęcia strony do obrotu.');
+  }
 
   const rotatedUri = await rotateUri(existing.imageUri, 180);
   await persistPageImageFile(bookId, pageId, rotatedUri);
@@ -528,11 +588,17 @@ export async function rotatePageImage180(
 export async function deletePage(bookId: string, pageId: string): Promise<Book> {
   const book = await readBook(bookId);
   const page = book.pages.find((p) => p.id === pageId);
-  if (page) {
+  if (page?.imageUri) {
     await FileSystem.deleteAsync(page.imageUri, { idempotent: true });
   }
   book.pages = book.pages
     .filter((p) => p.id !== pageId)
     .map((p, idx) => ({ ...p, index: idx + 1 }));
-  return writeBook(book);
+  const saved = await writeBook(book);
+  syncRemoteQuietly(deletePageFromRemote(bookId, pageId));
+  // Renumber remaining pages on remote (best-effort).
+  for (const remaining of saved.pages) {
+    syncRemoteQuietly(pushPageOcrToRemote(bookId, remaining));
+  }
+  return saved;
 }

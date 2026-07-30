@@ -10,12 +10,14 @@ import { isApiConfigured } from '@/src/ai/config';
 import { estimateGeminiRequestCost, formatUsd } from '@/src/ai/pricing';
 import {
   cancelAiForPage,
+  AiQuotaExceededError,
   runPageAiExclusive,
   useAiQueue,
 } from '@/src/ai/queue';
 import { useAuth } from '@/src/auth/AuthProvider';
 import type { AiAnalysis, Book, BookPage } from '@/src/domain/types';
 import { isLandscapeUri } from '@/src/images/ensurePortrait';
+import { getLibraryBook } from '@/src/library/books';
 import { cancelOcrForPage, runPageOcrExclusive, useOcrQueue } from '@/src/ocr/queue';
 import { OcrAuthRequiredError, OcrQuotaExceededError } from '@/src/ocr/quota';
 import {
@@ -37,6 +39,7 @@ import {
   IconButton,
   Loader,
   OcrStatusBadge,
+  PageImagePlaceholder,
   Row,
   ScanQueueCard,
   Sheet,
@@ -61,10 +64,19 @@ function formatBytes(bytes: number): string {
   return `${mb < 10 ? mb.toFixed(2) : mb.toFixed(1)} MB`;
 }
 
+function formatScore(value: number): string {
+  return value.toFixed(2);
+}
+
+function formatTokenCount(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return 'Brak danych';
+  return Math.round(value).toLocaleString('pl-PL');
+}
+
 export default function PageDetailScreen() {
   const { id, pageId } = useLocalSearchParams<{ id: string; pageId: string }>();
   const router = useRouter();
-  const { isLoggedIn } = useAuth();
+  const { ready, isLoggedIn } = useAuth();
   const insets = useSafeAreaInsets();
   const [book, setBook] = useState<Book | null>(null);
   const [page, setPage] = useState<BookPage | null>(null);
@@ -88,6 +100,13 @@ export default function PageDetailScreen() {
     if (!book) return [];
     return [...book.pages].sort((a, b) => a.index - b.index);
   }, [book]);
+
+  useEffect(() => {
+    if (!ready) return;
+    if (!isLoggedIn) {
+      router.replace('/login');
+    }
+  }, [ready, isLoggedIn, router]);
 
   const currentPos = useMemo(() => {
     if (!page) return { index: -1, prev: null as BookPage | null, next: null as BookPage | null };
@@ -145,16 +164,16 @@ export default function PageDetailScreen() {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (!id || !pageId) return;
+    if (!id || !pageId || !isLoggedIn) return;
     setLoading(true);
     try {
-      let data = await getBook(id);
+      let data = await getLibraryBook(id);
       let found = data.pages.find((p) => p.id === pageId) ?? null;
       if (!found) {
         throw new Error('Nie znaleziono strony.');
       }
 
-      if (await isLandscapeUri(found.imageUri)) {
+      if (found.imageUri && (await isLandscapeUri(found.imageUri))) {
         await persistPortraitPageImage(id, pageId, found.imageUri);
         data = await getBook(id);
         found = data.pages.find((p) => p.id === pageId) ?? found;
@@ -167,11 +186,12 @@ export default function PageDetailScreen() {
     } finally {
       setLoading(false);
     }
-  }, [applyPage, id, pageId, router]);
+  }, [applyPage, id, isLoggedIn, pageId, router]);
 
   useEffect(() => {
+    if (!isLoggedIn) return;
     void refresh();
-  }, [refresh]);
+  }, [isLoggedIn, refresh]);
 
   useEffect(() => {
     const uri = page?.imageUri;
@@ -243,6 +263,10 @@ export default function PageDetailScreen() {
       router.push('/login');
       return;
     }
+    if (!page.imageUri?.trim()) {
+      Alert.alert('Odczyt tekstu', 'Brak lokalnego zdjęcia tej strony.');
+      return;
+    }
     setRunningOcr(true);
     try {
       const recognized = await runPageOcrExclusive(id, page.id, page.imageUri);
@@ -267,19 +291,33 @@ export default function PageDetailScreen() {
 
   const onRetryAi = async () => {
     if (!id || !page) return;
-    if (!isApiConfigured()) return;
+    if (!isApiConfigured()) {
+      Alert.alert('AI', 'Brak adresu API. Ustaw EXPO_PUBLIC_API_BASE_URL.');
+      return;
+    }
     if (!isLoggedIn) {
       router.push('/login');
       return;
     }
-    if (!ocrText.trim()) return;
+    if (!page.imageUri?.trim()) {
+      Alert.alert('AI', 'Brak zdjęcia strony do analizy.');
+      return;
+    }
     setRunningAi(true);
     try {
       const corrected = await runPageAiExclusive(id, page.id);
       setAiText(corrected);
       setTextTab('ai');
       await refresh();
-    } catch {
+    } catch (error) {
+      if (error instanceof AiQuotaExceededError) {
+        router.push('/subscribe');
+        return;
+      }
+      Alert.alert(
+        'Analiza i Korekta AI',
+        error instanceof Error ? error.message : 'Korekta AI nie powiodła się.'
+      );
       await refresh();
     } finally {
       setRunningAi(false);
@@ -288,12 +326,20 @@ export default function PageDetailScreen() {
 
   const onRotate180 = async () => {
     if (!id || !page) return;
+    if (!page.imageUri?.trim()) {
+      Alert.alert('Obrót', 'Brak lokalnego zdjęcia tej strony.');
+      return;
+    }
     setRotating(true);
     try {
       const { page: rotated } = await rotatePageImage180(id, page.id);
       setPage(rotated);
       if (!isLoggedIn) {
         Alert.alert('Obrócono', 'Zdjęcie obrócone. Zaloguj się, aby odczytać tekst OCR.');
+        await refresh();
+        return;
+      }
+      if (!rotated.imageUri?.trim()) {
         await refresh();
         return;
       }
@@ -381,7 +427,11 @@ export default function PageDetailScreen() {
             <AiQueueCard />
 
             <View style={styles.imageCard}>
-              <Image source={{ uri: page.imageUri }} style={styles.image} key={page.imageUri} />
+              {page.imageUri ? (
+                <Image source={{ uri: page.imageUri }} style={styles.image} key={page.imageUri} />
+              ) : (
+                <PageImagePlaceholder style={styles.image} />
+              )}
 
               <View style={styles.imageBadge}>
                 <OcrStatusBadge status={runningOcr || rotating ? 'pending' : page.ocrStatus} />
@@ -637,15 +687,6 @@ export default function PageDetailScreen() {
       />
     </View>
   );
-}
-
-function formatScore(value: number): string {
-  return value.toFixed(2);
-}
-
-function formatTokenCount(value: number | null): string {
-  if (value == null) return 'Brak danych';
-  return value.toLocaleString('pl-PL');
 }
 
 function AiAnalysisDialog({
