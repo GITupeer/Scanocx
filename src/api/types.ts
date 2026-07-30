@@ -35,6 +35,17 @@ export type PhotoQuota = {
   unlimited: boolean;
 };
 
+/** Limit książek z backendu. Free: 3 łącznie. Pro: unlimited. */
+export type BookQuota = {
+  plan: string;
+  period_type: 'lifetime' | string;
+  period_key: string;
+  limit: number | null;
+  used: number;
+  remaining: number | null;
+  unlimited: boolean;
+};
+
 /** Limit eksportu z backendu — per format. */
 export type ExportFormatQuota = {
   limit: number | null;
@@ -65,6 +76,7 @@ export type ApiUser = {
   ocr_quota: OcrQuota | null;
   export_quota: ExportQuota | null;
   photo_quota: PhotoQuota | null;
+  book_quota: BookQuota | null;
   created_at?: string | null;
 };
 

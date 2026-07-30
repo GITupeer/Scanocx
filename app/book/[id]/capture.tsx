@@ -29,6 +29,7 @@ import {
   PhotoQuotaExceededError,
   refreshPhotoQuota,
 } from '@/src/photos/quota';
+import { ensureLocalBook } from '@/src/library/books';
 import {
   addPageFromCameraUri,
   replacePageFromCameraUri,
@@ -153,8 +154,18 @@ export default function CaptureScreen() {
     if (!ready) return;
     if (!isLoggedIn) {
       router.replace('/login');
+      return;
     }
-  }, [ready, isLoggedIn, router]);
+    if (!id) return;
+    // Cloud-only książka z listy nie ma lokalnego meta.json — materializuj shell wcześniej.
+    void ensureLocalBook(id).catch((error) => {
+      Alert.alert(
+        'Błąd',
+        error instanceof Error ? error.message : 'Nie znaleziono książki.'
+      );
+      router.replace('/');
+    });
+  }, [ready, isLoggedIn, id, router]);
 
   const clearProgressSoon = useCallback((delayMs = 1400) => {
     if (progressClearTimerRef.current) clearTimeout(progressClearTimerRef.current);
@@ -338,6 +349,10 @@ export default function CaptureScreen() {
       const skipOcr = opts?.skipOcr === true;
 
       patchStep('save', 'active');
+
+      // Lista biblioteki pokazuje książki z API bez lokalnego shella —
+      // capture musi go mieć zanim readBook() w storage.
+      await ensureLocalBook(id);
 
       if (isReplace) {
         const { page } = await replacePageFromCameraUri(id, replacePageId, saveUriPath);

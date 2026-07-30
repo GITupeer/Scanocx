@@ -254,6 +254,18 @@ export async function getLibraryBook(bookId: string): Promise<Book> {
 }
 
 /**
+ * Gwarantuje lokalny meta.json przed mutacjami (capture itd.).
+ * Cloud-only książki z listy nie mają shella — ściąga go z API tylko gdy brak lokalnie.
+ */
+export async function ensureLocalBook(bookId: string): Promise<Book> {
+  try {
+    return await getLocalBook(bookId);
+  } catch {
+    return getLibraryBook(bookId);
+  }
+}
+
+/**
  * Upload lokalnych książek nieobecnych na backendzie (migracja po zmianie modelu).
  */
 export async function migrateLocalBooksToRemote(): Promise<void> {

@@ -7,6 +7,11 @@ import { isApiConfigured } from '@/src/ai/config';
 import * as api from '@/src/api/endpoints';
 import { ApiError, type AiUsageItem } from '@/src/api/types';
 import { useAuth } from '@/src/auth/AuthProvider';
+import {
+  FREE_BOOK_LIMIT,
+  refreshBookQuota,
+  useBookQuota,
+} from '@/src/books/quota';
 import { FREE_OCR_MONTHLY_LIMIT, refreshOcrQuota, useOcrQuota } from '@/src/ocr/quota';
 import {
   FREE_PHOTO_MONTHLY_LIMIT,
@@ -91,6 +96,7 @@ export default function UsageScreen() {
   const { user, ready, isLoggedIn, refresh } = useAuth();
   const ocrQuota = useOcrQuota();
   const photoQuota = usePhotoQuota();
+  const bookQuota = useBookQuota();
   const isPro = user?.plan === 'pro';
 
   const [items, setItems] = useState<AiUsageItem[]>([]);
@@ -113,6 +119,7 @@ export default function UsageScreen() {
       await refresh();
       await refreshOcrQuota();
       await refreshPhotoQuota(user?.plan === 'pro');
+      await refreshBookQuota(user?.plan === 'pro');
       const result = await api.fetchAiUsage();
       setItems(result.data);
     } catch (error) {
@@ -151,6 +158,38 @@ export default function UsageScreen() {
           styles.content,
           { paddingBottom: insets.bottom + space.xl },
         ]}>
+        <Card style={styles.quotaCard}>
+          <View style={styles.quotaTop}>
+            <Text style={styles.quotaTitle}>Książki</Text>
+            <Badge
+              label={planLabel(user?.plan)}
+              tone={isPro ? 'success' : 'primary'}
+              icon={isPro ? 'bolt' : 'book'}
+            />
+          </View>
+          {bookQuota.unlimited || isPro ? (
+            <Text style={styles.quotaValue}>Nielimitowane</Text>
+          ) : (
+            <>
+              <Text style={styles.quotaValue}>
+                {bookQuota.remaining ?? 0} z {bookQuota.limit ?? FREE_BOOK_LIMIT} książek
+              </Text>
+              <Text style={styles.quotaHint}>
+                {bookQuota.used} utworzone · limit łącznie (nie miesięczny)
+              </Text>
+              <ProgressBar
+                value={
+                  bookQuota.limit != null && bookQuota.limit > 0
+                    ? Math.max(0, Math.min(1, bookQuota.used / bookQuota.limit))
+                    : 0
+                }
+                height={6}
+                style={styles.quotaBar}
+              />
+            </>
+          )}
+        </Card>
+
         <Card style={styles.quotaCard}>
           <View style={styles.quotaTop}>
             <Text style={styles.quotaTitle}>OCR w tym miesiącu</Text>

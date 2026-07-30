@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Book;
 use App\Models\Page;
 use App\Models\User;
+use App\Services\BookQuotaService;
 use App\Services\BookSearchService;
 use App\Services\PhotoQuotaService;
 use Illuminate\Http\JsonResponse;
@@ -53,7 +54,7 @@ class BookController extends Controller
         return response()->json($this->serializeBook($book));
     }
 
-    public function store(Request $request, PhotoQuotaService $photoQuota): JsonResponse
+    public function store(Request $request, PhotoQuotaService $photoQuota, BookQuotaService $bookQuota): JsonResponse
     {
         /** @var User $user */
         $user = $request->user();
@@ -70,6 +71,19 @@ class BookController extends Controller
             'pages.*.ai_status' => ['nullable', 'string', 'max:32'],
             'pages.*.ai_meta' => ['nullable', 'array'],
         ]);
+
+        $exists = Book::query()
+            ->where('user_id', $user->id)
+            ->where('local_id', $data['local_id'])
+            ->exists();
+
+        if (! $exists) {
+            try {
+                $bookQuota->assertCanCreate($user);
+            } catch (RuntimeException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
+        }
 
         $book = Book::updateOrCreate(
             [

@@ -14,6 +14,7 @@ class UserResource extends JsonResource
      * @param  array<string, mixed>|null  $ocrQuota
      * @param  array<string, mixed>|null  $exportQuota
      * @param  array<string, mixed>|null  $photoQuota
+     * @param  array<string, mixed>|null  $bookQuota
      */
     public function __construct(
         $resource,
@@ -21,6 +22,7 @@ class UserResource extends JsonResource
         private ?array $ocrQuota = null,
         private ?array $exportQuota = null,
         private ?array $photoQuota = null,
+        private ?array $bookQuota = null,
     ) {
         parent::__construct($resource);
     }
@@ -43,6 +45,7 @@ class UserResource extends JsonResource
             'ocr_quota' => $this->ocrQuota,
             'export_quota' => $this->exportQuota,
             'photo_quota' => $this->photoQuota,
+            'book_quota' => $this->bookQuota,
             'created_at' => $user->created_at?->toIso8601String(),
         ];
     }

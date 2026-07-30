@@ -19,6 +19,9 @@ export const PRO_AI_MONTHLY_LIMIT = 5_000;
 export const FREE_PHOTO_MONTHLY_LIMIT = 100;
 export const FREE_PDF_MONTHLY_LIMIT = 20;
 
+/** Limit książek (łącznie, nie miesięcznie). Free: 3. Pro: bez limitu. */
+export const FREE_BOOK_LIMIT = 3;
+
 export type PlanFeature = {
   icon: IconName;
   title: string;
@@ -28,10 +31,16 @@ export type PlanFeature = {
 
 export const PLAN_FEATURES: PlanFeature[] = [
   {
+    icon: 'book',
+    title: 'Tworzenie książek',
+    free: `${FREE_BOOK_LIMIT}`,
+    pro: 'Bez limitu',
+  },
+  {
     icon: 'ai',
     title: 'Analiza i Korekta AI',
-    free: `${FREE_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów`,
-    pro: `${PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów`,
+    free: `${FREE_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów (~5 stron)`,
+    pro: `${PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów (~700 stron)`,
   },
   {
     icon: 'scan',

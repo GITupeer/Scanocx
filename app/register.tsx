@@ -17,6 +17,7 @@ import { useAuth } from '@/src/auth/AuthProvider';
 import { AuroraBackdrop, Button, TextField, colors, font, space } from '@/src/ui';
 import {
   FREE_AI_MONTHLY_LIMIT,
+  FREE_BOOK_LIMIT,
   FREE_OCR_MONTHLY_LIMIT,
   FREE_PHOTO_MONTHLY_LIMIT,
   PRO_OCR_MONTHLY_LIMIT,
@@ -71,11 +72,10 @@ export default function RegisterScreen() {
           keyboardShouldPersistTaps="handled">
           <Text style={styles.title}>Załóż konto</Text>
           <Text style={styles.subtitle}>
-            Po rejestracji: {FREE_OCR_MONTHLY_LIMIT} OCR / miesiąc ·{' '}
+            Po rejestracji: {FREE_BOOK_LIMIT} książki · {FREE_OCR_MONTHLY_LIMIT} OCR / miesiąc ·{' '}
             {FREE_PHOTO_MONTHLY_LIMIT} zdjęć / miesiąc ·{' '}
-            {FREE_AI_MONTHLY_LIMIT} tokenów AI / miesiąc. Pro ={' '}
+            {FREE_AI_MONTHLY_LIMIT} tokenów AI / miesiąc. Pro = bez limitu książek,{' '}
             {PRO_OCR_MONTHLY_LIMIT.toLocaleString('pl-PL')} OCR i nielimitowane zdjęcia.
-            Bez konta zapisujesz tylko zdjęcia.
           </Text>
 
           <TextField

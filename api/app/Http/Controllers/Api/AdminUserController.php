@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\UserResource;
 use App\Models\User;
 use App\Services\AiQuotaService;
+use App\Services\BookQuotaService;
 use App\Services\ExportQuotaService;
 use App\Services\OcrQuotaService;
 use App\Services\PhotoQuotaService;
@@ -15,7 +16,7 @@ use Illuminate\Validation\Rule;
 
 class AdminUserController extends Controller
 {
-    public function index(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota, PhotoQuotaService $photoQuota): JsonResponse
+    public function index(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota, PhotoQuotaService $photoQuota, BookQuotaService $bookQuota): JsonResponse
     {
         $users = User::query()
             ->with('roles')
@@ -26,13 +27,14 @@ class AdminUserController extends Controller
                 $quota->snapshot($user),
                 $ocrQuota->snapshot($user),
                 $exportQuota->snapshot($user),
-                $photoQuota->snapshot($user)
+                $photoQuota->snapshot($user),
+                $bookQuota->snapshot($user)
             ))->resolve($request));
 
         return response()->json(['data' => $users]);
     }
 
-    public function update(Request $request, User $user, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota, PhotoQuotaService $photoQuota): UserResource
+    public function update(Request $request, User $user, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota, PhotoQuotaService $photoQuota, BookQuotaService $bookQuota): UserResource
     {
         $data = $request->validate([
             'plan' => ['required', Rule::in([User::PLAN_FREE, User::PLAN_PRO])],
@@ -46,7 +48,8 @@ class AdminUserController extends Controller
             $quota->snapshot($user),
             $ocrQuota->snapshot($user),
             $exportQuota->snapshot($user),
-            $photoQuota->snapshot($user)
+            $photoQuota->snapshot($user),
+            $bookQuota->snapshot($user)
         );
     }
 }

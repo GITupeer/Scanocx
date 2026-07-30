@@ -10,6 +10,7 @@ use App\Models\Book;
 use App\Models\Page;
 use App\Models\User;
 use App\Services\AiQuotaService;
+use App\Services\BookQuotaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -68,7 +69,7 @@ class AiController extends Controller
         ]);
     }
 
-    public function analyze(Request $request, AiQuotaService $quota): JsonResponse
+    public function analyze(Request $request, AiQuotaService $quota, BookQuotaService $bookQuota): JsonResponse
     {
         /** @var User $user */
         $user = $request->user();
@@ -86,6 +87,19 @@ class AiController extends Controller
         ]);
 
         $pageCount = count($data['pages']);
+
+        $bookExists = Book::query()
+            ->where('user_id', $user->id)
+            ->where('local_id', $data['local_id'])
+            ->exists();
+
+        if (! $bookExists) {
+            try {
+                $bookQuota->assertCanCreate($user);
+            } catch (RuntimeException $e) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
+        }
 
         try {
             $quota->assertCanReserve($user, $pageCount);

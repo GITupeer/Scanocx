@@ -118,6 +118,14 @@ export default function AdminUsersScreen() {
                     / miesiąc
                   </Text>
                 ) : null}
+                {user.book_quota ? (
+                  <Text style={styles.quota}>
+                    Książki:{' '}
+                    {user.book_quota.unlimited
+                      ? '∞'
+                      : `${user.book_quota.used}/${user.book_quota.limit}`}
+                  </Text>
+                ) : null}
               </View>
               <Divider />
               <View style={styles.actions}>

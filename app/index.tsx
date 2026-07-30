@@ -15,6 +15,11 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/auth/AuthProvider";
+import {
+  assertCanCreateBook,
+  BookQuotaExceededError,
+  refreshBookQuota,
+} from "@/src/books/quota";
 import type { BookSummary } from "@/src/domain/types";
 import { listLibraryBooks } from "@/src/library/books";
 import { useOcrQueue } from "@/src/ocr/queue";
@@ -124,12 +129,13 @@ export default function LibraryScreen() {
     setLoading(true);
     try {
       setBooks(await listLibraryBooks());
+      void refreshBookQuota(user?.plan === "pro");
     } catch {
       setBooks([]);
     } finally {
       setLoading(false);
     }
-  }, [isLoggedIn]);
+  }, [isLoggedIn, user?.plan]);
 
   useFocusEffect(
     useCallback(() => {
@@ -183,11 +189,25 @@ export default function LibraryScreen() {
     }
     setCreating(true);
     try {
+      const isPro = user?.plan === "pro";
+      await assertCanCreateBook(isPro);
       const book = await createBook(title);
+      void refreshBookQuota(isPro);
       setCreateOpen(false);
       setTitle("");
       router.push(`/book/${book.id}`);
     } catch (error) {
+      if (
+        error instanceof BookQuotaExceededError ||
+        (error instanceof Error &&
+          /limit książek|limit ksiazek/i.test(error.message))
+      ) {
+        Alert.alert("Limit książek", error.message, [
+          { text: "Anuluj", style: "cancel" },
+          { text: "Pro", onPress: () => router.push("/subscribe" as Href) },
+        ]);
+        return;
+      }
       Alert.alert(
         "Błąd",
         error instanceof Error
