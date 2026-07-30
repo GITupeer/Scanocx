@@ -31,6 +31,7 @@ import {
   bookPagesDir,
   booksRoot,
   pageImagePath,
+  pageOriginalImagePath,
 } from '@/src/storage/paths';
 
 function syncRemoteQuietly(task: Promise<unknown>): void {
@@ -47,6 +48,7 @@ function normalizePage(page: BookPage): BookPage {
   return {
     ...page,
     imageUri: page.imageUri?.trim() ? page.imageUri : null,
+    originalImageUri: page.originalImageUri?.trim() ? page.originalImageUri : null,
     ocrText: page.ocrText ?? '',
     aiText: page.aiText ?? '',
     printedPageNumber: page.printedPageNumber ?? null,
@@ -62,6 +64,30 @@ function normalizePage(page: BookPage): BookPage {
     aiStatus: page.aiStatus ?? 'idle',
     aiError: page.aiError ?? null,
   };
+}
+
+async function deleteUriQuietly(uri: string | null | undefined): Promise<void> {
+  if (!uri?.trim()) return;
+  await FileSystem.deleteAsync(uri, { idempotent: true });
+}
+
+async function copyPageImagePair(
+  bookId: string,
+  pageId: string,
+  croppedUri: string,
+  originalUri?: string | null
+): Promise<{ imageUri: string; originalImageUri: string | null }> {
+  const stamp = Date.now();
+  const imageUri = pageImagePath(bookId, pageId, stamp);
+  await FileSystem.copyAsync({ from: croppedUri, to: imageUri });
+
+  let originalImageUri: string | null = null;
+  if (originalUri?.trim()) {
+    originalImageUri = pageOriginalImagePath(bookId, pageId, stamp);
+    await FileSystem.copyAsync({ from: originalUri, to: originalImageUri });
+  }
+
+  return { imageUri, originalImageUri };
 }
 
 function normalizeAiAnalysis(raw: BookPage['aiAnalysis'] | undefined): AiAnalysis | null {
@@ -264,6 +290,7 @@ export async function addPageFromImage(
     id: pageId,
     index: book.pages.length + 1,
     imageUri: dest,
+    originalImageUri: null,
     ocrText: '',
     ...freshAiFields(),
     printedPageNumber: null,
@@ -281,22 +308,29 @@ export async function addPageFromImage(
 /**
  * Capture v2: sam copy pliku kamery → meta. Zero ImageManipulator.
  * Orientację / OCR ogarnia późniejszy runPageOcr (gdy limit na to pozwala).
+ * `cameraUri` = wersja przycięta/poprawiona; opcjonalnie `originalUri` = pełna klatka.
  */
 export async function addPageFromCameraUri(
   bookId: string,
-  cameraUri: string
+  cameraUri: string,
+  options: { originalUri?: string | null } = {}
 ): Promise<{ book: Book; page: BookPage }> {
   const book = await readBook(bookId);
   await ensureDir(bookPagesDir(bookId));
 
   const pageId = createId('page');
-  const dest = pageImagePath(bookId, pageId);
-  await FileSystem.copyAsync({ from: cameraUri, to: dest });
+  const { imageUri, originalImageUri } = await copyPageImagePair(
+    bookId,
+    pageId,
+    cameraUri,
+    options.originalUri
+  );
 
   const page: BookPage = {
     id: pageId,
     index: book.pages.length + 1,
-    imageUri: dest,
+    imageUri,
+    originalImageUri,
     ocrText: '',
     ...freshAiFields(),
     printedPageNumber: null,
@@ -443,7 +477,11 @@ export async function replacePageImage(
   bookId: string,
   pageId: string,
   sourceUri: string,
-  options: { extraRotate?: 0 | 90 | 180 | 270; alreadyNormalized?: boolean } = {}
+  options: {
+    extraRotate?: 0 | 90 | 180 | 270;
+    alreadyNormalized?: boolean;
+    originalUri?: string | null;
+  } = {}
 ): Promise<{ book: Book; page: BookPage }> {
   const book = await readBook(bookId);
   const existing = book.pages.find((p) => p.id === pageId);
@@ -453,22 +491,25 @@ export async function replacePageImage(
 
   await ensureDir(bookPagesDir(bookId));
 
-  if (existing.imageUri) {
-    await FileSystem.deleteAsync(existing.imageUri, { idempotent: true });
-  }
+  await deleteUriQuietly(existing.imageUri);
+  await deleteUriQuietly(existing.originalImageUri);
 
-  // Unikalna ścieżka → świeży URI, bez cache starego obrazu
-  const dest = `${bookPagesDir(bookId)}${pageId}-${Date.now()}.jpg`;
   const portraitUri = options.alreadyNormalized
     ? sourceUri
     : await ensurePortraitUri(sourceUri, {
         extraRotate: options.extraRotate ?? 0,
       });
-  await FileSystem.copyAsync({ from: portraitUri, to: dest });
+  const { imageUri, originalImageUri } = await copyPageImagePair(
+    bookId,
+    pageId,
+    portraitUri,
+    options.originalUri
+  );
 
   const page: BookPage = {
     ...existing,
-    imageUri: dest,
+    imageUri,
+    originalImageUri,
     ocrText: '',
     ...freshAiFields(),
     printedPageNumber: null,
@@ -486,7 +527,8 @@ export async function replacePageImage(
 export async function replacePageFromCameraUri(
   bookId: string,
   pageId: string,
-  cameraUri: string
+  cameraUri: string,
+  options: { originalUri?: string | null } = {}
 ): Promise<{ book: Book; page: BookPage }> {
   const book = await readBook(bookId);
   const existing = book.pages.find((p) => p.id === pageId);
@@ -496,12 +538,54 @@ export async function replacePageFromCameraUri(
 
   await ensureDir(bookPagesDir(bookId));
 
-  if (existing.imageUri) {
-    await FileSystem.deleteAsync(existing.imageUri, { idempotent: true });
+  await deleteUriQuietly(existing.imageUri);
+  await deleteUriQuietly(existing.originalImageUri);
+
+  const { imageUri, originalImageUri } = await copyPageImagePair(
+    bookId,
+    pageId,
+    cameraUri,
+    options.originalUri
+  );
+
+  const page: BookPage = {
+    ...existing,
+    imageUri,
+    originalImageUri,
+    ocrText: '',
+    ...freshAiFields(),
+    printedPageNumber: null,
+    ocrQuality: null,
+    ocrStatus: 'idle',
+  };
+
+  book.pages = book.pages.map((p) => (p.id === pageId ? page : p));
+  const saved = await writeBook(book);
+  syncRemoteQuietly(pushPageToRemote(bookId, page));
+  return { book: saved, page };
+}
+
+/**
+ * Podmienia tylko kadr (wersję poprawioną), zachowując oryginalną klatkę.
+ * Używane po ręcznym dopasowaniu rogów.
+ */
+export async function replacePageCroppedImage(
+  bookId: string,
+  pageId: string,
+  croppedUri: string
+): Promise<{ book: Book; page: BookPage }> {
+  const book = await readBook(bookId);
+  const existing = book.pages.find((p) => p.id === pageId);
+  if (!existing) {
+    throw new Error(`Page not found: ${pageId}`);
   }
 
-  const dest = `${bookPagesDir(bookId)}${pageId}-${Date.now()}.jpg`;
-  await FileSystem.copyAsync({ from: cameraUri, to: dest });
+  await ensureDir(bookPagesDir(bookId));
+
+  const stamp = Date.now();
+  const dest = pageImagePath(bookId, pageId, stamp);
+  await FileSystem.copyAsync({ from: croppedUri, to: dest });
+  await deleteUriQuietly(existing.imageUri);
 
   const page: BookPage = {
     ...existing,
@@ -588,9 +672,8 @@ export async function rotatePageImage180(
 export async function deletePage(bookId: string, pageId: string): Promise<Book> {
   const book = await readBook(bookId);
   const page = book.pages.find((p) => p.id === pageId);
-  if (page?.imageUri) {
-    await FileSystem.deleteAsync(page.imageUri, { idempotent: true });
-  }
+  await deleteUriQuietly(page?.imageUri);
+  await deleteUriQuietly(page?.originalImageUri);
   book.pages = book.pages
     .filter((p) => p.id !== pageId)
     .map((p, idx) => ({ ...p, index: idx + 1 }));

@@ -182,7 +182,7 @@ export default function PlansScreen() {
                 },
                 {
                   icon: 'bolt' as const,
-                  text: `Pro: ${PRO_OCR_MONTHLY_LIMIT.toLocaleString('pl-PL')} OCR i ${PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów AI.`,
+                  text: `Pro: ${PRO_OCR_MONTHLY_LIMIT.toLocaleString('pl-PL')} OCR, ${PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów AI i priorytetowa kolejka.`,
                 },
                 {
                   icon: 'ebook' as const,

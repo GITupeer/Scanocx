@@ -97,8 +97,9 @@ export async function resolveLocalPageImageUri(
     const match = entries
       .filter(
         (name) =>
-          name === `${pageId}.jpg` ||
-          (name.startsWith(`${pageId}-`) && name.endsWith('.jpg'))
+          !name.includes('-original') &&
+          (name === `${pageId}.jpg` ||
+            (name.startsWith(`${pageId}-`) && name.endsWith('.jpg')))
       )
       .sort()
       .at(-1);
@@ -145,11 +146,16 @@ export async function mapApiPageToBookPage(
     page.local_id,
     localHint?.imageUri
   );
+  const originalImageUri =
+    localHint?.originalImageUri && (await fileExists(localHint.originalImageUri))
+      ? localHint.originalImageUri
+      : null;
 
   return {
     id: page.local_id,
     index: page.index,
     imageUri,
+    originalImageUri,
     ocrText,
     aiText,
     printedPageNumber: page.printed_page_number ?? null,

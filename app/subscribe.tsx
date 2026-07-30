@@ -234,6 +234,7 @@ export default function SubscribeScreen() {
         <View style={styles.perks}>
           {[
             "Więcej korekty AI na trudniejsze skany",
+            "Priorytetowa kolejka AI — szybsza analiza",
             `${PRO_OCR_MONTHLY_LIMIT.toLocaleString("pl-PL")} odczytów OCR na okres`,
             "TXT bez limitu · PDF i eBook bez limitu",
           ].map((line) => (

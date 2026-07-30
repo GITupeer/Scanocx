@@ -12,6 +12,9 @@ class GeminiService
 
     public const TIMEOUT_SECONDS = 120;
 
+    /** Najdłuższy bok obrazu wysyłanego do Gemini (px). */
+    public const MAX_IMAGE_EDGE_PX = 1024;
+
     public const SYSTEM_PROMPT = <<<'PROMPT'
 Jesteś profesjonalnym korektorem i transkrybentem tekstu polskiego. Dostajesz ZDJĘCIE strony książki (skan / fotografia). Masz odczytać tekst ze zdjęcia i zwrócić czystą, poprawną wersję.
 
@@ -82,6 +85,8 @@ PROMPT;
         if ($bytes === '') {
             throw new RuntimeException('Brak zdjęcia strony do analizy AI.');
         }
+
+        [$bytes, $mimeType] = $this->downscaleForGemini($bytes, $mimeType);
 
         $endpoint = sprintf('https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent', self::MODEL);
 
@@ -288,6 +293,56 @@ PROMPT;
             'output_tokens' => is_numeric($candidates) ? (int) $candidates : null,
             'total_tokens' => is_numeric($total) ? (int) $total : null,
         ];
+    }
+
+    /**
+     * Skaluje obraz tak, by najdłuższy bok miał co najwyżej MAX_IMAGE_EDGE_PX.
+     * Mniejsze obrazy zostawia bez zmian.
+     *
+     * @return array{0: string, 1: string} [bytes, mimeType]
+     */
+    private function downscaleForGemini(string $bytes, string $mimeType): array
+    {
+        if (! function_exists('imagecreatefromstring') || ! function_exists('imagescale')) {
+            return [$bytes, $mimeType];
+        }
+
+        $src = @imagecreatefromstring($bytes);
+        if ($src === false) {
+            return [$bytes, $mimeType];
+        }
+
+        $width = imagesx($src);
+        $height = imagesy($src);
+        $longEdge = max($width, $height);
+
+        if ($longEdge <= self::MAX_IMAGE_EDGE_PX) {
+            imagedestroy($src);
+
+            return [$bytes, $mimeType];
+        }
+
+        $scale = self::MAX_IMAGE_EDGE_PX / $longEdge;
+        $newWidth = max(1, (int) round($width * $scale));
+        $newHeight = max(1, (int) round($height * $scale));
+
+        $scaled = imagescale($src, $newWidth, $newHeight);
+        imagedestroy($src);
+
+        if ($scaled === false) {
+            return [$bytes, $mimeType];
+        }
+
+        ob_start();
+        $ok = imagejpeg($scaled, null, 85);
+        imagedestroy($scaled);
+        $out = ob_get_clean();
+
+        if (! $ok || $out === false || $out === '') {
+            return [$bytes, $mimeType];
+        }
+
+        return [$out, 'image/jpeg'];
     }
 
     private function nullableString(mixed $value): ?string

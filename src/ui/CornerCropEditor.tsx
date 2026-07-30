@@ -12,7 +12,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 
-import { colors } from './theme';
+import { colors, shadow } from './theme';
 
 export type CropPoint = { x: number; y: number };
 
@@ -239,14 +239,14 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     overflow: 'hidden',
-    backgroundColor: colors.night,
+    backgroundColor: colors.surfaceSunken,
   },
   edge: {
     position: 'absolute',
     height: EDGE,
-    backgroundColor: colors.white,
+    backgroundColor: colors.primary,
     borderRadius: 1,
-    opacity: 0.92,
+    opacity: 0.95,
   },
   handle: {
     position: 'absolute',
@@ -263,5 +263,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderWidth: 2.5,
     borderColor: colors.white,
+    ...shadow.soft,
   },
 });

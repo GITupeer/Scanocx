@@ -52,6 +52,7 @@ import {
 } from '@/src/ui';
 
 type TextTab = 'ai' | 'ocr';
+type ImagePreview = 'cropped' | 'original';
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '—';
@@ -84,6 +85,7 @@ export default function PageDetailScreen() {
   const [aiText, setAiText] = useState('');
   const [printedPageNumber, setPrintedPageNumber] = useState('');
   const [textTab, setTextTab] = useState<TextTab>('ai');
+  const [imagePreview, setImagePreview] = useState<ImagePreview>('cropped');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [runningOcr, setRunningOcr] = useState(false);
@@ -161,6 +163,7 @@ export default function PageDetailScreen() {
     setAiText(found.aiText);
     setPrintedPageNumber(found.printedPageNumber ?? '');
     setTextTab(found.aiStatus === 'done' && found.aiText.trim() ? 'ai' : 'ocr');
+    setImagePreview('cropped');
   }, []);
 
   const refresh = useCallback(async () => {
@@ -194,7 +197,10 @@ export default function PageDetailScreen() {
   }, [isLoggedIn, refresh]);
 
   useEffect(() => {
-    const uri = page?.imageUri;
+    const uri =
+      imagePreview === 'original' && page?.originalImageUri?.trim()
+        ? page.originalImageUri
+        : page?.imageUri;
     if (!uri) {
       setImageSizeLabel(null);
       return;
@@ -216,7 +222,7 @@ export default function PageDetailScreen() {
     return () => {
       cancelled = true;
     };
-  }, [page?.imageUri]);
+  }, [imagePreview, page?.imageUri, page?.originalImageUri]);
 
   const analyzingThisPage =
     ocrQueue.currentPageId === pageId || aiQueue.currentPageIds.includes(pageId);
@@ -387,6 +393,12 @@ export default function PageDetailScreen() {
 
   const position = currentPos.index >= 0 ? currentPos.index + 1 : 0;
   const editingAi = textTab === 'ai';
+  const hasOriginal = Boolean(page.originalImageUri?.trim());
+  const previewUri =
+    imagePreview === 'original' && hasOriginal
+      ? page.originalImageUri
+      : page.imageUri;
+  const showingOriginal = imagePreview === 'original' && hasOriginal;
   const aiCost = page.aiAnalysis
     ? estimateGeminiRequestCost({
         promptTokens: page.aiAnalysis.promptTokens,
@@ -426,9 +438,40 @@ export default function PageDetailScreen() {
             <ScanQueueCard />
             <AiQueueCard />
 
+            {hasOriginal ? (
+              <View style={styles.previewTabRow}>
+                <Pressable
+                  onPress={() => setImagePreview('cropped')}
+                  style={[styles.previewTab, !showingOriginal && styles.previewTabActive]}>
+                  <Text
+                    style={[
+                      styles.previewTabLabel,
+                      !showingOriginal && styles.previewTabLabelActive,
+                    ]}>
+                    Kadr
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setImagePreview('original')}
+                  style={[styles.previewTab, showingOriginal && styles.previewTabActive]}>
+                  <Text
+                    style={[
+                      styles.previewTabLabel,
+                      showingOriginal && styles.previewTabLabelActive,
+                    ]}>
+                    Oryginał
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+
             <View style={styles.imageCard}>
-              {page.imageUri ? (
-                <Image source={{ uri: page.imageUri }} style={styles.image} key={page.imageUri} />
+              {previewUri ? (
+                <Image
+                  source={{ uri: previewUri }}
+                  style={styles.image}
+                  key={`${previewUri}-${showingOriginal ? 'orig' : 'crop'}`}
+                />
               ) : (
                 <PageImagePlaceholder style={styles.image} />
               )}
@@ -454,6 +497,7 @@ export default function PageDetailScreen() {
                 <Text style={styles.imageCounterText}>
                   {position} / {pagesOrdered.length}
                   {imageSizeLabel ? ` · ${imageSizeLabel}` : ''}
+                  {showingOriginal ? ' · oryginał' : ''}
                 </Text>
               </View>
             </View>
@@ -814,6 +858,31 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.line,
     ...shadow.soft,
+  },
+  previewTabRow: {
+    flexDirection: 'row',
+    gap: space.sm,
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: radius.lg,
+    padding: 4,
+  },
+  previewTab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderRadius: radius.md,
+  },
+  previewTabActive: {
+    backgroundColor: colors.surface,
+    ...shadow.soft,
+  },
+  previewTabLabel: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: colors.muted,
+  },
+  previewTabLabelActive: {
+    color: colors.ink,
   },
   image: {
     width: '100%',

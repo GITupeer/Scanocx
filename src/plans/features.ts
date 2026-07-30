@@ -43,6 +43,12 @@ export const PLAN_FEATURES: PlanFeature[] = [
     pro: `${PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów (~700 stron)`,
   },
   {
+    icon: 'bolt',
+    title: 'Priorytet kolejki AI',
+    free: 'Standardowa',
+    pro: 'Priorytetowa',
+  },
+  {
     icon: 'scan',
     title: 'OCR',
     free: `${FREE_OCR_MONTHLY_LIMIT} odczytów`,

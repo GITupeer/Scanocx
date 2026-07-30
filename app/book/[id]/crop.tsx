@@ -1,5 +1,6 @@
 /**
  * Ręczna korekta kadru strony — przesuwanie 4 rogów + perspective crop + OCR.
+ * Styl jasny (Aurora), jak Home / podgląd strony.
  */
 import { cropImage } from 'react-native-live-detect-edges';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -11,11 +12,12 @@ import { useAuth } from '@/src/auth/AuthProvider';
 import { getImageSize } from '@/src/images/ensurePortrait';
 import { runPageOcrExclusive } from '@/src/ocr/queue';
 import { OcrAuthRequiredError, OcrQuotaExceededError } from '@/src/ocr/quota';
-import { getBook, replacePageFromCameraUri } from '@/src/storage/books';
+import { getBook, replacePageCroppedImage } from '@/src/storage/books';
 import {
   AppBar,
   Button,
   CornerCropEditor,
+  FadeInUp,
   Loader,
   colors,
   radius,
@@ -44,6 +46,7 @@ export default function PageCropScreen() {
   const [editorReady, setEditorReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
+  const [sourceLabel, setSourceLabel] = useState('kadr');
 
   useEffect(() => {
     if (!ready) return;
@@ -62,14 +65,18 @@ export default function PageCropScreen() {
         const book = await getBook(id);
         const page = book.pages.find((p) => p.id === pageId);
         if (!page) throw new Error('Nie znaleziono strony.');
-        if (!page.imageUri?.trim()) {
+
+        // Preferuj oryginał — dopasowanie rogów na pełnej klatce.
+        const sourceUri = page.originalImageUri?.trim() || page.imageUri?.trim() || null;
+        if (!sourceUri) {
           throw new Error('Brak lokalnego zdjęcia tej strony.');
         }
-        const size = await getImageSize(page.imageUri);
+        const size = await getImageSize(sourceUri);
         if (cancelled) return;
-        setImageUri(page.imageUri);
+        setImageUri(sourceUri);
         setImageSize(size);
         setPageIndex(page.index);
+        setSourceLabel(page.originalImageUri?.trim() ? 'oryginał' : 'kadr');
       } catch (error) {
         Alert.alert(
           'Błąd',
@@ -105,7 +112,7 @@ export default function PageCropScreen() {
       }
 
       setHint('Zapisuję…');
-      const { page } = await replacePageFromCameraUri(id, pageId, toFileUri(cropped.uri));
+      const { page } = await replacePageCroppedImage(id, pageId, toFileUri(cropped.uri));
 
       if (!isLoggedIn) {
         Alert.alert(
@@ -155,28 +162,33 @@ export default function PageCropScreen() {
     <View style={styles.root}>
       <AppBar
         title={`Kadr · strona ${pageIndex}`}
-        subtitle="Przesuń rogi i zatwierdź"
-        tone="dark"
+        subtitle={`Źródło: ${sourceLabel} · przesuń rogi i zatwierdź`}
       />
 
-      <View style={styles.editorWrap}>
-        <CornerCropEditor
-          ref={editorRef}
-          imageUri={imageUri}
-          imageWidth={imageSize.width}
-          imageHeight={imageSize.height}
-          onReadyChange={setEditorReady}
-        />
-      </View>
+      <FadeInUp style={styles.editorCard}>
+        <View style={styles.editorWrap}>
+          <CornerCropEditor
+            ref={editorRef}
+            imageUri={imageUri}
+            imageWidth={imageSize.width}
+            imageHeight={imageSize.height}
+            onReadyChange={setEditorReady}
+          />
+        </View>
+      </FadeInUp>
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, space.md) }]}>
-        {hint ? <Text style={styles.hint}>{hint}</Text> : (
-          <Text style={styles.hint}>Dopasuj 4 rogi do obszaru strony, potem odczytaj tekst.</Text>
+        {hint ? (
+          <Text style={styles.hint}>{hint}</Text>
+        ) : (
+          <Text style={styles.hint}>
+            Dopasuj 4 rogi do obszaru strony — oryginał zostaje zapisany osobno.
+          </Text>
         )}
         <View style={styles.actions}>
           <Button
             label="Anuluj"
-            variant="glass"
+            variant="outline"
             disabled={busy}
             onPress={() => router.back()}
             style={styles.secondary}
@@ -198,13 +210,21 @@ export default function PageCropScreen() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: colors.night,
+    backgroundColor: colors.canvas,
+  },
+  editorCard: {
+    flex: 1,
+    marginHorizontal: space.lg,
+    marginTop: space.sm,
+    borderRadius: radius.xl,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.line,
+    overflow: 'hidden',
+    ...shadow.soft,
   },
   editorWrap: {
     flex: 1,
-    marginHorizontal: space.md,
-    borderRadius: radius.lg,
-    overflow: 'hidden',
   },
   footer: {
     paddingHorizontal: space.lg,
@@ -212,19 +232,20 @@ const styles = StyleSheet.create({
     gap: space.sm,
   },
   hint: {
-    color: 'rgba(255,255,255,0.72)',
+    color: colors.muted,
     fontSize: 13,
     fontWeight: '600',
     textAlign: 'center',
+    lineHeight: 18,
   },
   actions: {
     flexDirection: 'row',
     gap: space.sm,
     padding: space.sm,
     borderRadius: radius.xl,
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: colors.glass,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: colors.hairline,
     ...shadow.float,
   },
   secondary: {

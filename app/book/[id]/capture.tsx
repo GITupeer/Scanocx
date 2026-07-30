@@ -135,6 +135,7 @@ export default function CaptureScreen() {
   /** Aktualna wartość trybu — bez przebudowy callbacków przy każdym przełączeniu. */
   const processLiveRef = useRef(true);
   const adminModeRef = useRef(false);
+  const adminOriginalUriRef = useRef<string | null>(null);
   const progressClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [busy, setBusy] = useState(false);
@@ -344,9 +345,13 @@ export default function CaptureScreen() {
   }, [adminDraftUri, busy, processDeferredPages, router]);
 
   const saveProcessedUri = useCallback(
-    async (saveUriPath: string, opts?: { skipOcr?: boolean }) => {
+    async (
+      saveUriPath: string,
+      opts?: { skipOcr?: boolean; originalUri?: string | null }
+    ) => {
       if (!id) return;
       const skipOcr = opts?.skipOcr === true;
+      const originalOpts = { originalUri: opts?.originalUri ?? null };
 
       patchStep('save', 'active');
 
@@ -355,7 +360,12 @@ export default function CaptureScreen() {
       await ensureLocalBook(id);
 
       if (isReplace) {
-        const { page } = await replacePageFromCameraUri(id, replacePageId, saveUriPath);
+        const { page } = await replacePageFromCameraUri(
+          id,
+          replacePageId,
+          saveUriPath,
+          originalOpts
+        );
         patchStep('save', 'done');
         if (!skipOcr) {
           if (page.imageUri?.trim()) {
@@ -382,7 +392,7 @@ export default function CaptureScreen() {
         return;
       }
 
-      const { page } = await addPageFromCameraUri(id, saveUriPath);
+      const { page } = await addPageFromCameraUri(id, saveUriPath, originalOpts);
       void refreshPhotoQuota(isPro);
       setSessionCount((n) => n + 1);
       setProgress((prev) =>
@@ -419,12 +429,14 @@ export default function CaptureScreen() {
   );
 
   const saveUri = useCallback(
-    async (rawUri: string) => {
+    async (rawUri: string, originalUri?: string | null) => {
       if (!id) return;
       const uri = toFileUri(rawUri);
+      const original = originalUri?.trim() ? toFileUri(originalUri) : null;
 
       if (adminModeRef.current) {
         setProgress(null);
+        adminOriginalUriRef.current = original;
         // Chwila na domknięcie natywnego takePhoto zanim Modal przykryje kamerę.
         setTimeout(() => setAdminDraftUri(uri), 80);
         return;
@@ -437,7 +449,7 @@ export default function CaptureScreen() {
         // Enhance zawsze od razu po zdjęciu — niezależnie od processLive (OCR live / szybkie skanowanie).
         const enhanced = await enhanceScanClarity(uri, { mode: 'document' });
         patchStep('enhance', 'done');
-        await saveProcessedUri(enhanced);
+        await saveProcessedUri(enhanced, { originalUri: original });
       } catch (error) {
         Alert.alert(
           'Błąd',
@@ -459,7 +471,11 @@ export default function CaptureScreen() {
       patchStep('capture', 'done');
       patchStep('enhance', 'done', 'ręcznie');
       try {
-        await saveProcessedUri(toFileUri(editedUri), { skipOcr: true });
+        await saveProcessedUri(toFileUri(editedUri), {
+          skipOcr: true,
+          originalUri: adminOriginalUriRef.current,
+        });
+        adminOriginalUriRef.current = null;
         setAdminDraftUri(null);
       } catch (error) {
         Alert.alert(
@@ -487,13 +503,15 @@ export default function CaptureScreen() {
 
     try {
       const result = await takePhoto();
-      const cropped = result.image?.uri ?? result.originalImage?.uri;
-      if (!cropped) {
+      const croppedUri = result.image?.uri ?? null;
+      const originalUri = result.originalImage?.uri ?? null;
+      const workingUri = croppedUri ?? originalUri;
+      if (!workingUri) {
         Alert.alert('Skan', 'Nie udało się zrobić zdjęcia.');
         setProgress(null);
         return;
       }
-      await saveUri(cropped);
+      await saveUri(workingUri, originalUri);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/native module|LiveDetect|null|undefined|TurboModule/i.test(message)) {
@@ -524,7 +542,8 @@ export default function CaptureScreen() {
         title: isReplace ? 'Podmiana strony' : 'Przetwarzanie strony',
       });
     }
-    await saveUri(result.assets[0].uri);
+    // Z galerii: oryginał = surowy wybór, kadr = po enhance.
+    await saveUri(result.assets[0].uri, result.assets[0].uri);
   }, [busy, isReplace, saveUri, startProgress]);
 
   if (!permission) {
