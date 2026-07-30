@@ -6,15 +6,15 @@ export const PRO_OCR_MONTHLY_LIMIT = 10_000;
 
 /**
  * Limit AI w tokenach użytkownika (nie stronach).
- * 1 token użytkownika = 300 realnych tokenów API (input+output).
- * Pro: 5 000 ≈ 1 500 000 realnych / miesiąc (~1000 stron po ~1500 realnych).
+ * 1 token użytkownika = 150 realnych tokenów API (input+output).
+ * Pro: 10 000 ≈ 1 500 000 realnych / miesiąc (~1000 stron po ~1500 realnych).
  */
-export const AI_REAL_TOKENS_PER_USER_TOKEN = 300;
+export const AI_REAL_TOKENS_PER_USER_TOKEN = 150;
 /** Szacunek rezerwacji przed analizą strony (~1 500 realnych). */
-export const AI_RESERVE_TOKENS_PER_PAGE = 5;
+export const AI_RESERVE_TOKENS_PER_PAGE = 10;
 
-export const FREE_AI_MONTHLY_LIMIT = 25;
-export const PRO_AI_MONTHLY_LIMIT = 5_000;
+export const FREE_AI_MONTHLY_LIMIT = 50;
+export const PRO_AI_MONTHLY_LIMIT = 10_000;
 
 export const FREE_PHOTO_MONTHLY_LIMIT = 100;
 export const FREE_PDF_MONTHLY_LIMIT = 20;

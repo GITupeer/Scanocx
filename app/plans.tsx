@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useOcrQueue } from '@/src/ocr/queue';
 import {
+  FREE_AI_MONTHLY_LIMIT,
   PLAN_FEATURES,
   PRO_AI_MONTHLY_LIMIT,
   PRO_OCR_MONTHLY_LIMIT,
@@ -181,8 +182,12 @@ export default function PlansScreen() {
                   text: 'OCR wymaga konta — gość może tylko robić zdjęcia.',
                 },
                 {
+                  icon: 'ai' as const,
+                  text: `AI: Free ${FREE_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów (~5 stron), Pro ${PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów (~1000 stron).`,
+                },
+                {
                   icon: 'bolt' as const,
-                  text: `Pro: ${PRO_OCR_MONTHLY_LIMIT.toLocaleString('pl-PL')} OCR, ${PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów AI i priorytetowa kolejka.`,
+                  text: `Pro: ${PRO_OCR_MONTHLY_LIMIT.toLocaleString('pl-PL')} OCR i priorytetowa kolejka AI.`,
                 },
                 {
                   icon: 'ebook' as const,
@@ -237,7 +242,7 @@ export default function PlansScreen() {
                   <Text style={styles.ctaTitle}>Masz plan Pro</Text>
                   <Text style={styles.ctaBody}>
                     {PRO_OCR_MONTHLY_LIMIT.toLocaleString('pl-PL')} OCR ·{' '}
-                    {PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów AI
+                    {PRO_AI_MONTHLY_LIMIT.toLocaleString('pl-PL')} tokenów AI (~1000 stron)
                   </Text>
                 </View>
                 <Icon name="chevronRight" size={18} color={colors.muted} />

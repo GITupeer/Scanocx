@@ -13,19 +13,19 @@ class AiQuotaService
     public const TIMEZONE = 'Europe/Warsaw';
 
     /**
-     * 1 token użytkownika = 300 realnych tokenów (input+output).
-     * 1 500 000 realnych ≈ 5 000 tokenów Pro (~1000 stron po ~1500 realnych).
+     * 1 token użytkownika = 150 realnych tokenów (input+output).
+     * 1 500 000 realnych ≈ 10 000 tokenów Pro (~1000 stron po ~1500 realnych).
      */
-    public const REAL_TOKENS_PER_USER_TOKEN = 300;
+    public const REAL_TOKENS_PER_USER_TOKEN = 150;
 
     /** Szacunek rezerwacji na stronę (~1 500 realnych tokenów). */
-    public const RESERVE_TOKENS_PER_PAGE = 5;
+    public const RESERVE_TOKENS_PER_PAGE = 10;
 
-    /** Free: ~5 stron przy szacunku 5 tokenów/strona. */
-    public const FREE_MONTHLY_LIMIT = 25;
+    /** Free: ~5 stron przy szacunku 10 tokenów/strona. */
+    public const FREE_MONTHLY_LIMIT = 50;
 
-    /** Pro: 5 000 tokenów / miesiąc. */
-    public const PRO_MONTHLY_LIMIT = 5000;
+    /** Pro: 10 000 tokenów / miesiąc. */
+    public const PRO_MONTHLY_LIMIT = 10000;
 
     /**
      * Przelicza realne tokeny API na tokeny użytkownika (nasze).
