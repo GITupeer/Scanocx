@@ -1,7 +1,7 @@
 /**
  * Limit OCR trzymany na backendzie (tylko zalogowany użytkownik).
- * Free: 30 / miesiąc. Pro: nielimitowane.
- * Gość — bez OCR (tylko lokalne zdjęcia).
+ * Free: 50 / miesiąc. Pro: nielimitowane.
+ * Gość — bez OCR (tylko lokalne zdjęcia, też z limitem free).
  */
 import { useSyncExternalStore } from 'react';
 
@@ -10,7 +10,7 @@ import * as api from '@/src/api/endpoints';
 import { ApiError, type OcrQuota } from '@/src/api/types';
 import { getAuthToken } from '@/src/api/token';
 
-export const FREE_OCR_MONTHLY_LIMIT = 30;
+export const FREE_OCR_MONTHLY_LIMIT = 50;
 
 export type OcrQuotaSnapshot = {
   loggedIn: boolean;
@@ -34,7 +34,7 @@ export class OcrQuotaExceededError extends Error {
   constructor(message?: string) {
     super(
       message ??
-        `Darmowy plan: limit ${FREE_OCR_MONTHLY_LIMIT} odczytów OCR na miesiąc. Zdjęcia możesz dalej robić bez limitu — przejdź na Pro, aby mieć nielimitowane OCR.`
+        `Darmowy plan: limit ${FREE_OCR_MONTHLY_LIMIT} odczytów OCR na miesiąc. Przejdź na Pro, aby mieć nielimitowane OCR.`
     );
     this.name = 'OcrQuotaExceededError';
   }

@@ -12,8 +12,8 @@ class OcrQuotaService
 {
     public const TIMEZONE = 'Europe/Warsaw';
 
-    /** Darmowy plan: 30 odczytów OCR / miesiąc. Pro = bez limitu. */
-    public const FREE_MONTHLY_LIMIT = 30;
+    /** Darmowy plan: 50 odczytów OCR / miesiąc. Pro = bez limitu. */
+    public const FREE_MONTHLY_LIMIT = 50;
 
     /**
      * @return array{plan: string, period_type: string, period_key: string, limit: int|null, used: int, reserved: int, remaining: int|null, unlimited: bool}

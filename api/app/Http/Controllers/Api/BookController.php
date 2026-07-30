@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Book;
 use App\Models\Page;
 use App\Models\User;
+use App\Services\BookSearchService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -25,6 +26,21 @@ class BookController extends Controller
         return response()->json([
             'data' => $books->map(fn (Book $book) => $this->serializeBookSummary($book))->all(),
         ]);
+    }
+
+    public function search(Request $request, BookSearchService $search): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        $data = $request->validate([
+            'q' => ['required', 'string', 'max:200'],
+            'limit' => ['sometimes', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $hits = $search->search($user, $data['q'], (int) ($data['limit'] ?? 40));
+
+        return response()->json(['data' => $hits]);
     }
 
     public function show(Request $request, string $localId): JsonResponse

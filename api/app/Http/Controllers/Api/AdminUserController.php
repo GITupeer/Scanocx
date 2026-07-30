@@ -8,13 +8,14 @@ use App\Models\User;
 use App\Services\AiQuotaService;
 use App\Services\ExportQuotaService;
 use App\Services\OcrQuotaService;
+use App\Services\PhotoQuotaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class AdminUserController extends Controller
 {
-    public function index(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota): JsonResponse
+    public function index(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota, PhotoQuotaService $photoQuota): JsonResponse
     {
         $users = User::query()
             ->with('roles')
@@ -24,13 +25,14 @@ class AdminUserController extends Controller
                 $user,
                 $quota->snapshot($user),
                 $ocrQuota->snapshot($user),
-                $exportQuota->snapshot($user)
+                $exportQuota->snapshot($user),
+                $photoQuota->snapshot($user)
             ))->resolve($request));
 
         return response()->json(['data' => $users]);
     }
 
-    public function update(Request $request, User $user, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota): UserResource
+    public function update(Request $request, User $user, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota, PhotoQuotaService $photoQuota): UserResource
     {
         $data = $request->validate([
             'plan' => ['required', Rule::in([User::PLAN_FREE, User::PLAN_PRO])],
@@ -43,7 +45,8 @@ class AdminUserController extends Controller
             $user->fresh('roles'),
             $quota->snapshot($user),
             $ocrQuota->snapshot($user),
-            $exportQuota->snapshot($user)
+            $exportQuota->snapshot($user),
+            $photoQuota->snapshot($user)
         );
     }
 }

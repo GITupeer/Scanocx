@@ -95,6 +95,28 @@ export function fetchBooks(): Promise<{ data: ApiBookSummary[] }> {
   return apiRequest<{ data: ApiBookSummary[] }>('/api/books');
 }
 
+export type ApiSearchHit = {
+  page_local_id: string;
+  book_local_id: string;
+  book_title: string;
+  page_index: number;
+  printed_page_number: string | null;
+  source: 'ai' | 'ocr';
+  snippet: string;
+  rank: number;
+};
+
+export function searchBooks(
+  q: string,
+  limit = 40
+): Promise<{ data: ApiSearchHit[] }> {
+  const params = new URLSearchParams({
+    q,
+    limit: String(limit),
+  });
+  return apiRequest<{ data: ApiSearchHit[] }>(`/api/books/search?${params.toString()}`);
+}
+
 export function fetchBook(localId: string): Promise<ApiBook> {
   return apiRequest<ApiBook>(`/api/books/${encodeURIComponent(localId)}`);
 }

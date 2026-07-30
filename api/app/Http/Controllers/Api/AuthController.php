@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\AiQuotaService;
 use App\Services\ExportQuotaService;
 use App\Services\OcrQuotaService;
+use App\Services\PhotoQuotaService;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,7 +21,7 @@ use Spatie\Permission\Models\Role;
 
 class AuthController extends Controller
 {
-    public function register(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota): JsonResponse
+    public function register(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota, PhotoQuotaService $photoQuota): JsonResponse
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
@@ -45,12 +46,13 @@ class AuthController extends Controller
                 $user,
                 $quota->snapshot($user),
                 $ocrQuota->snapshot($user),
-                $exportQuota->snapshot($user)
+                $exportQuota->snapshot($user),
+                $photoQuota->snapshot($user)
             ),
         ], 201);
     }
 
-    public function login(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota): JsonResponse
+    public function login(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota, PhotoQuotaService $photoQuota): JsonResponse
     {
         $credentials = $request->validate([
             'email' => ['required', 'email'],
@@ -73,7 +75,8 @@ class AuthController extends Controller
                 $user,
                 $quota->snapshot($user),
                 $ocrQuota->snapshot($user),
-                $exportQuota->snapshot($user)
+                $exportQuota->snapshot($user),
+                $photoQuota->snapshot($user)
             ),
         ]);
     }
@@ -85,7 +88,7 @@ class AuthController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    public function me(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota): UserResource
+    public function me(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota, PhotoQuotaService $photoQuota): UserResource
     {
         /** @var User $user */
         $user = $request->user();
@@ -94,11 +97,12 @@ class AuthController extends Controller
             $user,
             $quota->snapshot($user),
             $ocrQuota->snapshot($user),
-            $exportQuota->snapshot($user)
+            $exportQuota->snapshot($user),
+            $photoQuota->snapshot($user)
         );
     }
 
-    public function updateProfile(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota): UserResource
+    public function updateProfile(Request $request, AiQuotaService $quota, OcrQuotaService $ocrQuota, ExportQuotaService $exportQuota, PhotoQuotaService $photoQuota): UserResource
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:120'],
@@ -112,7 +116,8 @@ class AuthController extends Controller
             $user->fresh(),
             $quota->snapshot($user),
             $ocrQuota->snapshot($user),
-            $exportQuota->snapshot($user)
+            $exportQuota->snapshot($user),
+            $photoQuota->snapshot($user)
         );
     }
 

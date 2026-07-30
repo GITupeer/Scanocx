@@ -20,6 +20,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/change-password', [AuthController::class, 'changePassword']);
 
     Route::get('/books', [BookController::class, 'index']);
+    Route::get('/books/search', [BookController::class, 'search']);
     Route::post('/books', [BookController::class, 'store']);
     Route::get('/books/{localId}', [BookController::class, 'show']);
     Route::patch('/books/{localId}', [BookController::class, 'update']);
