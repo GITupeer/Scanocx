@@ -113,6 +113,7 @@ PROMPT;
                 'generationConfig' => [
                     'temperature' => 0.2,
                     'maxOutputTokens' => 65536,
+                    'mediaResolution' => 'MEDIA_RESOLUTION_LOW',
                     'responseMimeType' => 'application/json',
                     'responseSchema' => [
                         'type' => 'OBJECT',
