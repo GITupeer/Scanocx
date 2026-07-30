@@ -11,7 +11,11 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/auth/AuthProvider";
-import type { IconName } from "@/src/ui";
+import {
+  PLAN_FEATURES,
+  PRO_AI_MONTHLY_LIMIT,
+  PRO_OCR_MONTHLY_LIMIT,
+} from "@/src/plans/features";
 import {
   AppBar,
   AuroraBackdrop,
@@ -28,52 +32,6 @@ import {
 } from "@/src/ui";
 
 type BillingPeriod = "monthly" | "yearly";
-
-type Feature = {
-  icon: IconName;
-  title: string;
-  free: string;
-  pro: string;
-};
-
-const FEATURES: Feature[] = [
-  {
-    icon: "ai",
-    title: "Analiza i Korekta AI",
-    free: "5 stron / miesiąc",
-    pro: "750 stron / miesiąc",
-  },
-  {
-    icon: "scan",
-    title: "OCR",
-    free: "50 odczytów / miesiąc",
-    pro: "Bez limitu",
-  },
-  {
-    icon: "camera",
-    title: "Zdjęcia stron",
-    free: "50 / miesiąc",
-    pro: "Bez limitu",
-  },
-  {
-    icon: "text",
-    title: "Export TXT",
-    free: "Bez limitu",
-    pro: "Bez limitu",
-  },
-  {
-    icon: "pdf",
-    title: "Export PDF",
-    free: "20 / miesiąc",
-    pro: "Bez limitu",
-  },
-  {
-    icon: "ebook",
-    title: "Export eBook",
-    free: "Niedostępne",
-    pro: "Bez limitu",
-  },
-];
 
 const PRICES = {
   monthly: {
@@ -144,7 +102,7 @@ export default function SubscribeScreen() {
             />
             <Icon name="bolt" size={28} color={colors.white} />
           </View>
-          <Text style={styles.heroTitle}>Więcej AI. Zero limitu OCR.</Text>
+          <Text style={styles.heroTitle}>Więcej AI. Więcej OCR.</Text>
           <Text style={styles.heroBody}>
             Skanuj i poprawiaj tekst bez zatrzymywania się na limicie darmowego
             planu.
@@ -157,8 +115,8 @@ export default function SubscribeScreen() {
             <View style={styles.proActiveText}>
               <Text style={styles.proActiveTitle}>Subskrypcja aktywna</Text>
               <Text style={styles.proActiveDetail}>
-                Korzystasz z limitu Pro: 750 stron AI miesięcznie i
-                nielimitowanego OCR.
+                Korzystasz z limitu Pro: {PRO_AI_MONTHLY_LIMIT.toLocaleString("pl-PL")} tokenów AI i{" "}
+                {PRO_OCR_MONTHLY_LIMIT.toLocaleString("pl-PL")} OCR na okres.
               </Text>
             </View>
           </View>
@@ -238,19 +196,23 @@ export default function SubscribeScreen() {
 
         <Text style={styles.sectionTitle}>Co zyskujesz</Text>
 
+        <Text style={styles.periodNote}>
+          Liczby dotyczą jednego okresu rozliczeniowego (miesiąc).
+        </Text>
+
         <View style={styles.compare}>
           <View style={styles.compareHeader}>
             <Text style={styles.compareFeatureCol}>Funkcja</Text>
-            <Text style={styles.compareCol}>Free</Text>
+            <Text style={[styles.compareCol, styles.compareColFree]}>Free</Text>
             <Text style={[styles.compareCol, styles.compareColPro]}>Pro</Text>
           </View>
 
-          {FEATURES.map((feature, index) => (
+          {PLAN_FEATURES.map((feature, index) => (
             <View
               key={feature.title}
               style={[
                 styles.compareRow,
-                index === FEATURES.length - 1 && styles.compareRowLast,
+                index === PLAN_FEATURES.length - 1 && styles.compareRowLast,
               ]}
             >
               <View style={styles.compareFeature}>
@@ -259,7 +221,9 @@ export default function SubscribeScreen() {
                 </View>
                 <Text style={styles.compareFeatureLabel}>{feature.title}</Text>
               </View>
-              <Text style={styles.compareValue}>{feature.free}</Text>
+              <Text style={[styles.compareValue, styles.compareValueFree]}>
+                {feature.free}
+              </Text>
               <Text style={[styles.compareValue, styles.compareValuePro]}>
                 {feature.pro}
               </Text>
@@ -270,7 +234,7 @@ export default function SubscribeScreen() {
         <View style={styles.perks}>
           {[
             "Więcej korekty AI na trudniejsze skany",
-            "OCR bez miesięcznego limitu",
+            `${PRO_OCR_MONTHLY_LIMIT.toLocaleString("pl-PL")} odczytów OCR na okres`,
             "TXT bez limitu · PDF i eBook bez limitu",
           ].map((line) => (
             <View key={line} style={styles.perkRow}>
@@ -422,6 +386,11 @@ const styles = StyleSheet.create({
     ...font.h3,
     marginTop: space.xs,
   },
+  periodNote: {
+    ...font.small,
+    color: colors.muted,
+    marginTop: -space.sm,
+  },
   compare: {
     backgroundColor: colors.surface,
     borderRadius: radius.xl,
@@ -449,6 +418,9 @@ const styles = StyleSheet.create({
     textAlign: "right",
     ...font.caption,
     textTransform: "uppercase",
+  },
+  compareColFree: {
+    textAlign: "left",
   },
   compareColPro: {
     color: colors.primaryDeep,
@@ -489,6 +461,9 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.muted,
     lineHeight: 17,
+  },
+  compareValueFree: {
+    textAlign: "left",
   },
   compareValuePro: {
     color: colors.primaryDeep,

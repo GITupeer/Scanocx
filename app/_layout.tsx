@@ -32,6 +32,7 @@ export default function RootLayout() {
           <Stack.Screen name="forgot-password" />
           <Stack.Screen name="reset-password" />
           <Stack.Screen name="profile" />
+          <Stack.Screen name="plans" options={{ animation: 'fade' }} />
           <Stack.Screen name="usage" />
           <Stack.Screen name="subscribe" />
           <Stack.Screen name="admin/users" />

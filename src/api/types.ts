@@ -6,9 +6,13 @@ export type AiQuota = {
   used: number;
   reserved: number;
   remaining: number;
+  /** Zawsze „tokens” — limit AI liczony w tokenach użytkownika. */
+  unit?: 'tokens' | string;
+  real_tokens_per_user_token?: number;
+  reserve_tokens_per_page?: number;
 };
 
-/** Limit OCR z backendu. Pro: unlimited=true, limit/remaining = null. */
+/** Limit OCR z backendu. Free/Pro: limit liczbowy, unlimited=false. */
 export type OcrQuota = {
   plan: string;
   period_type: 'day' | 'month' | string;

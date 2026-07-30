@@ -22,7 +22,7 @@ export function AiLimitPromoCard({ count, onPress, style }: Props) {
   if (count <= 0) return null;
 
   const waiting = pagesLabel(count);
-  const title = 'Limit AI wykorzystany';
+  const title = 'Limit tokenów AI wykorzystany';
   const detail =
     count === 1
       ? `Została ${waiting} bez korekty. Przejdź na Pro, aby kontynuować.`

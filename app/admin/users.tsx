@@ -95,7 +95,8 @@ export default function AdminUsersScreen() {
                 />
                 {user.quota ? (
                   <Text style={styles.quota}>
-                    AI: {user.quota.remaining}/{user.quota.limit} (
+                    AI: {user.quota.remaining.toLocaleString('pl-PL')}/
+                    {user.quota.limit.toLocaleString('pl-PL')} tok. (
                     {user.quota.period_type === 'day' ? 'dzień' : 'miesiąc'})
                   </Text>
                 ) : null}

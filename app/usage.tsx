@@ -69,6 +69,9 @@ function usageDetail(item: AiUsageItem): string {
   const parts: string[] = [];
   if (item.completed > 0) parts.push(`${item.completed} OK`);
   if (item.failed > 0) parts.push(`${item.failed} błąd`);
+  if (typeof item.total_tokens === 'number' && item.total_tokens > 0) {
+    parts.push(`${item.total_tokens.toLocaleString('pl-PL')} tok. API`);
+  }
   const pages = item.pages
     .map((p) => p.page_index)
     .filter((n): n is number => typeof n === 'number')
@@ -230,11 +233,14 @@ export default function UsageScreen() {
           {quota ? (
             <>
               <Text style={styles.quotaValue}>
-                {quota.remaining} z {quota.limit} stron
+                {quota.remaining.toLocaleString('pl-PL')} z {quota.limit.toLocaleString('pl-PL')}{' '}
+                tokenów
               </Text>
               <Text style={styles.quotaHint}>
-                {quota.used} zużyte
-                {quota.reserved > 0 ? ` · ${quota.reserved} zarezerwowane` : ''}
+                {quota.used.toLocaleString('pl-PL')} zużyte
+                {quota.reserved > 0
+                  ? ` · ${quota.reserved.toLocaleString('pl-PL')} zarezerwowane`
+                  : ''}
                 {' · '}
                 / {quota.period_type === 'day' ? 'dzień' : 'miesiąc'}
               </Text>

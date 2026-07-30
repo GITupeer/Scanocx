@@ -1,12 +1,12 @@
 /**
  * Limit zdjęć stron (lokalnie, wg createdAt).
- * Free / gość: 50 / miesiąc. Pro: nielimitowane.
+ * Free / gość: 100 / miesiąc. Pro: nielimitowane.
  */
 import { useSyncExternalStore } from 'react';
 
 import { listBooks, getBook } from '@/src/storage/books';
 
-export const FREE_PHOTO_MONTHLY_LIMIT = 50;
+export const FREE_PHOTO_MONTHLY_LIMIT = 100;
 
 export type PhotoQuotaSnapshot = {
   periodKey: string;

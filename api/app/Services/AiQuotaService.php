@@ -12,12 +12,55 @@ class AiQuotaService
 {
     public const TIMEZONE = 'Europe/Warsaw';
 
-    public const FREE_MONTHLY_LIMIT = 5;
+    /**
+     * 1 token użytkownika = 600 realnych tokenów (input+output).
+     * 3 000 000 realnych ≈ 5 000 tokenów Pro.
+     */
+    public const REAL_TOKENS_PER_USER_TOKEN = 600;
 
-    public const PRO_MONTHLY_LIMIT = 750;
+    /** Szacunek rezerwacji na stronę (~4 200 realnych tokenów). */
+    public const RESERVE_TOKENS_PER_PAGE = 7;
+
+    /** Free: ~5 stron przy szacunku 7 tokenów/strona. */
+    public const FREE_MONTHLY_LIMIT = 35;
+
+    /** Pro: 5 000 tokenów / miesiąc. */
+    public const PRO_MONTHLY_LIMIT = 5000;
 
     /**
-     * @return array{plan: string, period_type: string, period_key: string, limit: int, used: int, reserved: int, remaining: int}
+     * Przelicza realne tokeny API na tokeny użytkownika (nasze).
+     */
+    public static function toUserTokens(?int $promptTokens, ?int $outputTokens, ?int $totalTokens): int
+    {
+        $real = 0;
+        if (is_int($totalTokens) && $totalTokens > 0) {
+            $real = $totalTokens;
+        } else {
+            $real = max(0, (int) $promptTokens) + max(0, (int) $outputTokens);
+        }
+
+        if ($real <= 0) {
+            return 1;
+        }
+
+        return max(1, (int) ceil($real / self::REAL_TOKENS_PER_USER_TOKEN));
+    }
+
+    /**
+     * Ile stron można uruchomić przy danym remaining (rezerwacja szacunkowa).
+     * Przy pozostałości < RESERVE_TOKENS_PER_PAGE nadal pozwala na 1 stronę.
+     */
+    public static function maxPagesForRemaining(int $remaining): int
+    {
+        if ($remaining <= 0) {
+            return 0;
+        }
+
+        return max(1, intdiv($remaining, self::RESERVE_TOKENS_PER_PAGE));
+    }
+
+    /**
+     * @return array{plan: string, period_type: string, period_key: string, limit: int, used: int, reserved: int, remaining: int, unit: string, real_tokens_per_user_token: int, reserve_tokens_per_page: int}
      */
     public function snapshot(User $user): array
     {
@@ -35,6 +78,9 @@ class AiQuotaService
             'used' => $used,
             'reserved' => $reserved,
             'remaining' => max(0, $limit - $used - $reserved),
+            'unit' => 'tokens',
+            'real_tokens_per_user_token' => self::REAL_TOKENS_PER_USER_TOKEN,
+            'reserve_tokens_per_page' => self::RESERVE_TOKENS_PER_PAGE,
         ];
     }
 
@@ -45,10 +91,23 @@ class AiQuotaService
         }
 
         $snap = $this->snapshot($user);
-        if ($snap['remaining'] < $pages) {
+        if ($snap['remaining'] <= 0) {
             $label = $snap['period_type'] === 'day' ? 'dzienny' : 'miesięczny';
             throw new RuntimeException(
-                "Przekroczono limit AI ({$label}: {$snap['limit']}). Pozostało: {$snap['remaining']}."
+                "Przekroczono limit AI ({$label}: {$snap['limit']} tokenów). Pozostało: 0 tokenów."
+            );
+        }
+
+        $maxPages = self::maxPagesForRemaining($snap['remaining']);
+        if ($pages > $maxPages) {
+            $label = $snap['period_type'] === 'day' ? 'dzienny' : 'miesięczny';
+            throw new RuntimeException(
+                "Przekroczono limit AI ({$label}: {$snap['limit']} tokenów). Pozostało: {$snap['remaining']} tokenów"
+                .(
+                    $maxPages > 0
+                        ? " (ok. {$maxPages} stron)."
+                        : '.'
+                )
             );
         }
     }
@@ -57,30 +116,38 @@ class AiQuotaService
     {
         $this->assertCanReserve($user, $pages);
 
+        $tokens = $pages * self::RESERVE_TOKENS_PER_PAGE;
         [$periodType, $periodKey] = array_slice($this->periodFor($user), 0, 2);
 
-        DB::transaction(function () use ($user, $periodType, $periodKey, $pages) {
+        DB::transaction(function () use ($user, $periodType, $periodKey, $tokens) {
             $usage = $this->usageRow($user, $periodType, $periodKey, lock: true);
-            $limit = $user->isPro() ? self::PRO_MONTHLY_LIMIT : self::FREE_MONTHLY_LIMIT;
-            $remaining = $limit - (int) $usage->used - (int) $usage->reserved;
-            if ($remaining < $pages) {
-                throw new RuntimeException('Przekroczono limit AI.');
-            }
-            $usage->reserved = (int) $usage->reserved + $pages;
+            // Przy ostatnich tokenach (< szacunek/strona) i tak rezerwujemy pełny szacunek —
+            // settle po analizie doliczy faktyczne zużycie.
+            $usage->reserved = (int) $usage->reserved + $tokens;
             $usage->save();
         });
     }
 
-    public function consumeOne(User $user): void
+    /**
+     * Po udanej analizie: zwalnia rezerwację szacunkową i dolicza faktyczne tokeny użytkownika.
+     */
+    public function consume(User $user, int $billableTokens): void
     {
+        $billable = max(1, $billableTokens);
         [$periodType, $periodKey] = array_slice($this->periodFor($user), 0, 2);
 
-        DB::transaction(function () use ($user, $periodType, $periodKey) {
+        DB::transaction(function () use ($user, $periodType, $periodKey, $billable) {
             $usage = $this->usageRow($user, $periodType, $periodKey, lock: true);
-            $usage->reserved = max(0, (int) $usage->reserved - 1);
-            $usage->used = (int) $usage->used + 1;
+            $usage->reserved = max(0, (int) $usage->reserved - self::RESERVE_TOKENS_PER_PAGE);
+            $usage->used = (int) $usage->used + $billable;
             $usage->save();
         });
+    }
+
+    /** @deprecated Użyj consume() z rzeczywistymi tokenami. */
+    public function consumeOne(User $user): void
+    {
+        $this->consume($user, self::RESERVE_TOKENS_PER_PAGE);
     }
 
     public function releaseOne(User $user): void
@@ -89,7 +156,7 @@ class AiQuotaService
 
         DB::transaction(function () use ($user, $periodType, $periodKey) {
             $usage = $this->usageRow($user, $periodType, $periodKey, lock: true);
-            $usage->reserved = max(0, (int) $usage->reserved - 1);
+            $usage->reserved = max(0, (int) $usage->reserved - self::RESERVE_TOKENS_PER_PAGE);
             $usage->save();
         });
     }

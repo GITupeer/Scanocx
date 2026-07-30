@@ -172,7 +172,7 @@ export default function LibraryScreen() {
 
   const quotaPillLabel = useMemo(() => {
     if (!isLoggedIn || !user) return "Zaloguj";
-    if (user.quota) return `${user.quota.remaining} AI`;
+    if (user.quota) return `${user.quota.remaining.toLocaleString('pl-PL')} tok. AI`;
     return planLabel(user.plan);
   }, [isLoggedIn, user]);
 
@@ -337,7 +337,7 @@ export default function LibraryScreen() {
         iconColor: "#7C3AED",
         meta:
           isLoggedIn && user?.quota
-            ? `${user.quota.remaining} analiz`
+            ? `${user.quota.remaining.toLocaleString('pl-PL')} tok. AI`
             : "Korekta tekstu",
         label: "AI",
         onPress: () => router.push((isLoggedIn ? "/usage" : "/login") as Href),
@@ -696,7 +696,7 @@ export default function LibraryScreen() {
             label="Użycie AI i OCR"
             detail={
               isLoggedIn && user?.quota
-                ? `${user.quota.remaining} analiz AI`
+                ? `${user.quota.remaining.toLocaleString('pl-PL')} tokenów AI`
                 : undefined
             }
             chevron

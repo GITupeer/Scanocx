@@ -9,13 +9,13 @@ use RuntimeException;
 
 /**
  * Limit zdjęć stron (nowe page rekordy) w miesiącu.
- * Free: 50 / miesiąc. Pro: bez limitu.
+ * Free: 100 / miesiąc. Pro: bez limitu.
  */
 class PhotoQuotaService
 {
     public const TIMEZONE = 'Europe/Warsaw';
 
-    public const FREE_MONTHLY_LIMIT = 50;
+    public const FREE_MONTHLY_LIMIT = 100;
 
     /**
      * @return array{plan: string, period_type: string, period_key: string, limit: int|null, used: int, remaining: int|null, unlimited: bool}

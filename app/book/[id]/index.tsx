@@ -414,7 +414,7 @@ export default function BookDetailScreen() {
       if (slice.length === 0) {
         Alert.alert(
           'Limit OCR',
-          'Brak dostępnych odczytów w tym miesiącu. Przejdź na Pro, aby mieć nielimitowane OCR.'
+          'Brak dostępnych odczytów w tym miesiącu. Przejdź na Pro, aby mieć większy limit OCR.'
         );
         return;
       }

@@ -89,7 +89,12 @@ class ProcessPageAiJob implements ShouldQueue
                 $aiJob->save();
 
                 if ($aiJob->reserved_quota) {
-                    $quota->consumeOne($aiJob->batch->user);
+                    $billable = AiQuotaService::toUserTokens(
+                        isset($result['prompt_tokens']) ? (int) $result['prompt_tokens'] : null,
+                        isset($result['output_tokens']) ? (int) $result['output_tokens'] : null,
+                        isset($result['total_tokens']) ? (int) $result['total_tokens'] : null,
+                    );
+                    $quota->consume($aiJob->batch->user, $billable);
                     $aiJob->reserved_quota = false;
                     $aiJob->save();
                 }

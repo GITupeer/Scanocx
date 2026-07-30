@@ -299,7 +299,7 @@ export default function ProfileScreen() {
                     <Row
                       icon="bolt"
                       label="Przejdź na Pro"
-                      detail="Więcej AI i nielimitowane OCR"
+                      detail="Więcej AI i większy limit OCR"
                       tone="primary"
                       chevron
                       onPress={() => router.push('/subscribe')}

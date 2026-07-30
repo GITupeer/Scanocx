@@ -12,11 +12,14 @@ class OcrQuotaService
 {
     public const TIMEZONE = 'Europe/Warsaw';
 
-    /** Darmowy plan: 50 odczytów OCR / miesiąc. Pro = bez limitu. */
+    /** Darmowy plan: 50 odczytów OCR / miesiąc. */
     public const FREE_MONTHLY_LIMIT = 50;
 
+    /** Pro: 10 000 odczytów OCR / miesiąc. */
+    public const PRO_MONTHLY_LIMIT = 10000;
+
     /**
-     * @return array{plan: string, period_type: string, period_key: string, limit: int|null, used: int, reserved: int, remaining: int|null, unlimited: bool}
+     * @return array{plan: string, period_type: string, period_key: string, limit: int, used: int, reserved: int, remaining: int, unlimited: bool}
      */
     public function snapshot(User $user): array
     {
@@ -25,19 +28,6 @@ class OcrQuotaService
 
         $used = (int) $usage->used;
         $reserved = (int) $usage->reserved;
-
-        if ($limit === null) {
-            return [
-                'plan' => $user->plan,
-                'period_type' => $periodType,
-                'period_key' => $periodKey,
-                'limit' => null,
-                'used' => $used,
-                'reserved' => $reserved,
-                'remaining' => null,
-                'unlimited' => true,
-            ];
-        }
 
         return [
             'plan' => $user->plan,
@@ -57,10 +47,6 @@ class OcrQuotaService
             throw new RuntimeException('Brak odczytów do zarezerwowania.');
         }
 
-        if ($user->isPro()) {
-            return;
-        }
-
         $snap = $this->snapshot($user);
         if (($snap['remaining'] ?? 0) < $pages) {
             throw new RuntimeException(
@@ -70,21 +56,16 @@ class OcrQuotaService
     }
 
     /**
-     * Rezerwuje sloty przed lokalnym OCR. Pro — no-op.
+     * Rezerwuje sloty przed lokalnym OCR.
      */
     public function reserve(User $user, int $pages = 1): void
     {
         $this->assertCanReserve($user, $pages);
 
-        if ($user->isPro()) {
-            return;
-        }
+        [$periodType, $periodKey, $limit] = $this->periodFor($user);
 
-        [$periodType, $periodKey] = array_slice($this->periodFor($user), 0, 2);
-
-        DB::transaction(function () use ($user, $periodType, $periodKey, $pages) {
+        DB::transaction(function () use ($user, $periodType, $periodKey, $pages, $limit) {
             $usage = $this->usageRow($user, $periodType, $periodKey, lock: true);
-            $limit = self::FREE_MONTHLY_LIMIT;
             $remaining = $limit - (int) $usage->used - (int) $usage->reserved;
             if ($remaining < $pages) {
                 throw new RuntimeException('Przekroczono limit OCR.');
@@ -94,13 +75,9 @@ class OcrQuotaService
         });
     }
 
-    /** Po udanym OCR: reserved → used. Pro — no-op. */
+    /** Po udanym OCR: reserved → used. */
     public function consumeOne(User $user): void
     {
-        if ($user->isPro()) {
-            return;
-        }
-
         [$periodType, $periodKey] = array_slice($this->periodFor($user), 0, 2);
 
         DB::transaction(function () use ($user, $periodType, $periodKey) {
@@ -111,13 +88,9 @@ class OcrQuotaService
         });
     }
 
-    /** Po nieudanym OCR: zwalnia rezerwację. Pro — no-op. */
+    /** Po nieudanym OCR: zwalnia rezerwację. */
     public function releaseOne(User $user): void
     {
-        if ($user->isPro()) {
-            return;
-        }
-
         [$periodType, $periodKey] = array_slice($this->periodFor($user), 0, 2);
 
         DB::transaction(function () use ($user, $periodType, $periodKey) {
@@ -128,7 +101,7 @@ class OcrQuotaService
     }
 
     /**
-     * @return array{0: string, 1: string, 2: int|null}
+     * @return array{0: string, 1: string, 2: int}
      */
     private function periodFor(User $user): array
     {
@@ -136,7 +109,7 @@ class OcrQuotaService
         $monthKey = $now->format('Y-m');
 
         if ($user->isPro()) {
-            return ['month', $monthKey, null];
+            return ['month', $monthKey, self::PRO_MONTHLY_LIMIT];
         }
 
         return ['month', $monthKey, self::FREE_MONTHLY_LIMIT];

@@ -11,6 +11,7 @@ import { canRunAiRewrite, needsAiRewrite } from '@/src/ai/displayText';
 import * as api from '@/src/api/endpoints';
 import { ApiError } from '@/src/api/types';
 import { getAuthToken } from '@/src/api/token';
+import { AI_RESERVE_TOKENS_PER_PAGE } from '@/src/plans/features';
 import { getBook, listBooks, updatePageAi, updatePagesAi } from '@/src/storage/books';
 import { withBookMetaLock } from '@/src/storage/lock';
 
@@ -616,9 +617,9 @@ function isAiQuotaErrorMessage(message: string | null | undefined): boolean {
   );
 }
 
-/** Brak pozostałych korekt AI w limicie — UI powinno skierować na /subscribe. */
+/** Brak pozostałych tokenów AI w limicie — UI powinno skierować na /subscribe. */
 export class AiQuotaExceededError extends Error {
-  constructor(message = 'Wykorzystano limit korekt AI na ten okres.') {
+  constructor(message = 'Wykorzystano limit tokenów AI na ten okres.') {
     super(message);
     this.name = 'AiQuotaExceededError';
   }
@@ -679,7 +680,7 @@ async function startCloudAnalysis(
     return 0;
   }
 
-  // Tylko tyle stron, ile mieści się w limicie — reszta zostaje bez błędu.
+  // Tylko tyle stron, ile mieści się w limicie tokenów (szacunek rezerwacji).
   try {
     const quota = await api.fetchQuota();
     const remaining = Math.max(0, quota.remaining);
@@ -687,9 +688,19 @@ async function startCloudAnalysis(
       await clearAiQuotaErrors(bookId, pages);
       throw new AiQuotaExceededError();
     }
-    if (pages.length > remaining) {
-      const skipped = pages.slice(remaining);
-      pages = pages.slice(0, remaining);
+    const perPage = Math.max(
+      1,
+      quota.reserve_tokens_per_page ?? AI_RESERVE_TOKENS_PER_PAGE
+    );
+    const maxPages =
+      remaining <= 0 ? 0 : Math.max(1, Math.floor(remaining / perPage));
+    if (maxPages <= 0) {
+      await clearAiQuotaErrors(bookId, pages);
+      throw new AiQuotaExceededError();
+    }
+    if (pages.length > maxPages) {
+      const skipped = pages.slice(maxPages);
+      pages = pages.slice(0, maxPages);
       await clearAiQuotaErrors(bookId, skipped);
     }
   } catch (error) {
@@ -896,7 +907,7 @@ export async function runPageAiExclusive(bookId: string, pageId: string): Promis
   const started = await startCloudAnalysis(bookId, [pageId], true);
   if (started <= 0) {
     throw new Error(
-      'Nie uruchomiono korekty AI. Sprawdź limit korekt albo spróbuj ponownie za chwilę.'
+      'Nie uruchomiono korekty AI. Sprawdź limit tokenów albo spróbuj ponownie za chwilę.'
     );
   }
 

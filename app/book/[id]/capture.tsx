@@ -225,7 +225,7 @@ export default function CaptureScreen() {
     }
     Alert.alert(
       'Limit OCR',
-      'Darmowy plan: 50 odczytów tekstu na miesiąc. OCR możesz uruchomić później (Pro = nielimitowane).'
+      'Darmowy plan: 50 odczytów tekstu na miesiąc. OCR możesz uruchomić później (Pro = 10 000 / miesiąc).'
     );
   }, []);
 

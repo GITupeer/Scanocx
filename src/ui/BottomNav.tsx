@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from './Icon';
 import { BOTTOM_NAV_HEIGHT, colors, radius, shadow, space } from './theme';
 
-export type NavTab = 'library' | 'profile';
+export type NavTab = 'library' | 'plans' | 'profile';
 
 const FAB_SIZE = 48;
 /** Lekki odstęp między paskiem a home indicator / dolną krawędzią. */
@@ -51,6 +51,24 @@ export function BottomNav({ active, onScan, scanBadge }: Props) {
         </Pressable>
 
         <Pressable
+          accessibilityRole="tab"
+          accessibilityState={{ selected: active === 'plans' }}
+          accessibilityLabel="Plany"
+          onPress={() => {
+            if (active !== 'plans') router.replace('/plans');
+          }}
+          style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}>
+          <Icon
+            name="bolt"
+            size={22}
+            color={active === 'plans' ? colors.primary : colors.inkSoft}
+          />
+          <Text style={[styles.tabLabel, active === 'plans' && styles.tabLabelActive]}>
+            Plany
+          </Text>
+        </Pressable>
+
+        <Pressable
           accessibilityRole="button"
           accessibilityLabel="Skanuj strony"
           onPress={onScan}
@@ -69,7 +87,9 @@ export function BottomNav({ active, onScan, scanBadge }: Props) {
           accessibilityRole="tab"
           accessibilityState={{ selected: active === 'profile' }}
           accessibilityLabel="Profil"
-          onPress={() => router.push('/profile')}
+          onPress={() => {
+            if (active !== 'profile') router.replace('/profile');
+          }}
           style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}>
           <Icon
             name="user"
