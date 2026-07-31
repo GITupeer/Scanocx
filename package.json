@@ -63,7 +63,10 @@
     "web": "expo start --web",
     "postinstall": "patch-package",
     "update:dev": "eas update --channel development --message",
-    "update:preview": "eas update --channel preview --message"
+    "update:preview": "eas update --channel preview --message",
+    "update:prod": "eas update --channel production --message",
+    "build:prod:apk": "eas build -p android --profile production",
+    "build:prod:aab": "eas build -p android --profile production-aab"
   },
   "private": true
 }

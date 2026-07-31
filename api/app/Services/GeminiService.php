@@ -16,7 +16,7 @@ class GeminiService
     public const MAX_IMAGE_EDGE_PX = 1024;
 
     public const SYSTEM_PROMPT = <<<'PROMPT'
-Jesteś profesjonalnym korektorem i transkrybentem tekstu. Dostajesz zdjęcie strony książki — odczytaj CAŁY tekst i zwróć czystą, poprawną wersję jako JSON (tylko JSON, bez markdown).
+Jesteś profesjonalnym korektorem i transkrybentem tekstu. Dostajesz zdjęcie książki — odczytaj CAŁY tekst i zwróć czystą, poprawną wersję jako JSON (tylko JSON, bez markdown).
 
 ODCZYT:
 - Odczytaj całą treść i nagłówki; nic nie pomijaj, nie skracaj, nie streszczaj, nie dodawaj.
@@ -25,12 +25,12 @@ ODCZYT:
 - \n przy dialogach / zmianie mówcy, nagłówkach, wierszach poematu; \n\n przy nowym akapicie. Nie łam linii w środku zdania przez łamanie techniczne druku.
 - Scalaj wyrazy z dywizem na końcu wiersza („rozcią- / gnięte” → „rozciągnięte”); prawdziwe łączniki zostaw.
 - Nieczytelny fragment → najbliższa sensowna rekonstrukcja, nie wymyślaj zdań. Ignoruj brud/cień/palce.
-- Więcej niż 1 strona na zdjęciu → tylko ta jedna pełna/najbardziej kompletna; resztę zignoruj.
+- WIELE STRON: sprawdź, czy na zdjęciu jest więcej niż jedna pełna strona (np. rozkładówka). Jeśli tak — odczytaj KAŻDĄ stronę osobno w kolejności od lewej do prawej (naturalna kolejność książki) i zwróć je jako elementy tablicy pages. Jedna strona na zdjęciu → pages z jednym elementem. Nie pomijaj żadnej pełnej strony.
 
-ANALIZA JSON:
+ANALIZA JSON (dla każdej pozycji w pages):
 - title / subtitle: tylko prawdziwe nagłówki (nie pierwsze zdanie). has_title / has_subtitle = false → title/subtitle = null.
 - page_number: numer z marginesu lub null; jeśli wykryty — USUŃ go z corrected_text.
-- ocr_quality (0.00–1.00): czytelność SKANU. ≥0.85 ostry; 0.50–0.84 drobne problemy; <0.50 gdy jakakolwiek istotna część nieczytelna (im gorzej, tym niżej; zgadywanie → <0.50).
+- ocr_quality (0.00–1.00): czytelność SKANU tej strony. ≥0.85 ostry; 0.50–0.84 drobne problemy; <0.50 gdy jakakolwiek istotna część nieczytelna (im gorzej, tym niżej; zgadywanie → <0.50).
 - coherence (0.00–1.00): spójność corrected_text po korekcie.
 PROMPT;
 
@@ -72,7 +72,7 @@ PROMPT;
                     [
                         'role' => 'user',
                         'parts' => [
-                            ['text' => 'Odczytaj i popraw tekst ze zdjęcia strony książki. Zwróć JSON zgodnie ze schematem.'],
+                            ['text' => 'Odczytaj i popraw tekst ze zdjęcia książki. Jeśli widać wiele stron, zwróć je wszystkie w pages (kolejność lewa→prawa). Zwróć JSON zgodnie ze schematem.'],
                             [
                                 'inline_data' => [
                                     'mime_type' => $mimeType,
@@ -90,56 +90,68 @@ PROMPT;
                     'responseSchema' => [
                         'type' => 'OBJECT',
                         'properties' => [
-                            'corrected_text' => [
-                                'type' => 'STRING',
-                                'description' => 'Pełny poprawiony tekst strony bez numeru strony; z \\n przy dialogach, akapitach i nagłówkach.',
-                            ],
-                            'has_title' => [
-                                'type' => 'BOOLEAN',
-                                'description' => 'Czy wykryto tytuł / nagłówek strony lub rozdziału.',
-                            ],
-                            'title' => [
-                                'type' => 'STRING',
-                                'nullable' => true,
-                                'description' => 'Wykryty tytuł lub null.',
-                            ],
-                            'has_subtitle' => [
-                                'type' => 'BOOLEAN',
-                                'description' => 'Czy wykryto podtytuł.',
-                            ],
-                            'subtitle' => [
-                                'type' => 'STRING',
-                                'nullable' => true,
-                                'description' => 'Wykryty podtytuł lub null.',
-                            ],
-                            'ocr_quality' => [
-                                'type' => 'NUMBER',
-                                'description' => 'Czytelność skanu 0.00–1.00; poniżej 0.50 gdy część strony jest nieczytelna (im gorzej, tym niżej).',
-                            ],
-                            'coherence' => [
-                                'type' => 'NUMBER',
-                                'description' => 'Spójność tekstu po korekcie AI, 0.00–1.00.',
-                            ],
-                            'page_number_detected' => [
-                                'type' => 'BOOLEAN',
-                                'description' => 'Czy wykryto numer strony na marginesie.',
-                            ],
-                            'page_number' => [
-                                'type' => 'STRING',
-                                'nullable' => true,
-                                'description' => 'Numer strony lub null; usunięty z corrected_text gdy wykryty.',
+                            'pages' => [
+                                'type' => 'ARRAY',
+                                'description' => 'Jedna lub więcej stron wykrytych na zdjęciu, w kolejności od lewej do prawej.',
+                                'items' => [
+                                    'type' => 'OBJECT',
+                                    'properties' => [
+                                        'corrected_text' => [
+                                            'type' => 'STRING',
+                                            'description' => 'Pełny poprawiony tekst strony bez numeru strony; z \\n przy dialogach, akapitach i nagłówkach.',
+                                        ],
+                                        'has_title' => [
+                                            'type' => 'BOOLEAN',
+                                            'description' => 'Czy wykryto tytuł / nagłówek strony lub rozdziału.',
+                                        ],
+                                        'title' => [
+                                            'type' => 'STRING',
+                                            'nullable' => true,
+                                            'description' => 'Wykryty tytuł lub null.',
+                                        ],
+                                        'has_subtitle' => [
+                                            'type' => 'BOOLEAN',
+                                            'description' => 'Czy wykryto podtytuł.',
+                                        ],
+                                        'subtitle' => [
+                                            'type' => 'STRING',
+                                            'nullable' => true,
+                                            'description' => 'Wykryty podtytuł lub null.',
+                                        ],
+                                        'ocr_quality' => [
+                                            'type' => 'NUMBER',
+                                            'description' => 'Czytelność skanu 0.00–1.00; poniżej 0.50 gdy część strony jest nieczytelna (im gorzej, tym niżej).',
+                                        ],
+                                        'coherence' => [
+                                            'type' => 'NUMBER',
+                                            'description' => 'Spójność tekstu po korekcie AI, 0.00–1.00.',
+                                        ],
+                                        'page_number_detected' => [
+                                            'type' => 'BOOLEAN',
+                                            'description' => 'Czy wykryto numer strony na marginesie.',
+                                        ],
+                                        'page_number' => [
+                                            'type' => 'STRING',
+                                            'nullable' => true,
+                                            'description' => 'Numer strony lub null; usunięty z corrected_text gdy wykryty.',
+                                        ],
+                                    ],
+                                    'required' => [
+                                        'corrected_text',
+                                        'has_title',
+                                        'title',
+                                        'has_subtitle',
+                                        'subtitle',
+                                        'ocr_quality',
+                                        'coherence',
+                                        'page_number_detected',
+                                        'page_number',
+                                    ],
+                                ],
                             ],
                         ],
                         'required' => [
-                            'corrected_text',
-                            'has_title',
-                            'title',
-                            'has_subtitle',
-                            'subtitle',
-                            'ocr_quality',
-                            'coherence',
-                            'page_number_detected',
-                            'page_number',
+                            'pages',
                         ],
                     ],
                 ],
@@ -222,26 +234,73 @@ PROMPT;
             throw new RuntimeException('Gemini zwróciło niepoprawny JSON.');
         }
 
-        $text = trim((string) ($decoded['corrected_text'] ?? ''));
-        if ($text === '') {
+        $pages = $decoded['pages'] ?? null;
+
+        // Kompatybilność wsteczna: stary format z pojedynczym corrected_text.
+        if (! is_array($pages)) {
+            $legacyText = trim((string) ($decoded['corrected_text'] ?? ''));
+            if ($legacyText === '') {
+                throw new RuntimeException('Gemini zwróciło pustą tablicę pages.');
+            }
+            $pages = [$decoded];
+        }
+
+        if ($pages === []) {
+            throw new RuntimeException('Gemini zwróciło pustą tablicę pages.');
+        }
+
+        $texts = [];
+        $title = null;
+        $subtitle = null;
+        $pageNumber = null;
+        $minQuality = 1.0;
+        $minCoherence = 1.0;
+        $sawQuality = false;
+        $sawCoherence = false;
+
+        foreach ($pages as $page) {
+            if (! is_array($page)) {
+                continue;
+            }
+
+            $text = trim((string) ($page['corrected_text'] ?? ''));
+            if ($text === '') {
+                continue;
+            }
+            $texts[] = $text;
+
+            if ($title === null && (bool) ($page['has_title'] ?? false)) {
+                $title = $this->nullableString($page['title'] ?? null);
+            }
+            if ($subtitle === null && (bool) ($page['has_subtitle'] ?? false)) {
+                $subtitle = $this->nullableString($page['subtitle'] ?? null);
+            }
+            if ($pageNumber === null && (bool) ($page['page_number_detected'] ?? false)) {
+                $pageNumber = $this->nullableString($page['page_number'] ?? null);
+            }
+
+            $quality = $this->clampScore($page['ocr_quality'] ?? 0);
+            $coherence = $this->clampScore($page['coherence'] ?? 0);
+            $sawQuality = true;
+            $sawCoherence = true;
+            if ($quality < $minQuality) {
+                $minQuality = $quality;
+            }
+            if ($coherence < $minCoherence) {
+                $minCoherence = $coherence;
+            }
+        }
+
+        if ($texts === []) {
             throw new RuntimeException('Gemini zwróciło pusty corrected_text.');
         }
 
-        $hasTitle = (bool) ($decoded['has_title'] ?? false);
-        $title = $hasTitle ? $this->nullableString($decoded['title'] ?? null) : null;
-
-        $hasSubtitle = (bool) ($decoded['has_subtitle'] ?? false);
-        $subtitle = $hasSubtitle ? $this->nullableString($decoded['subtitle'] ?? null) : null;
-
-        $pageDetected = (bool) ($decoded['page_number_detected'] ?? false);
-        $pageNumber = $pageDetected ? $this->nullableString($decoded['page_number'] ?? null) : null;
-
         return [
-            'text' => $text,
+            'text' => implode("\n\n\n", $texts),
             'title' => $title,
             'subtitle' => $subtitle,
-            'ocr_quality' => $this->clampScore($decoded['ocr_quality'] ?? 0),
-            'coherence' => $this->clampScore($decoded['coherence'] ?? 0),
+            'ocr_quality' => $sawQuality ? $minQuality : 0.0,
+            'coherence' => $sawCoherence ? $minCoherence : 0.0,
             'page_number' => $pageNumber,
         ];
     }

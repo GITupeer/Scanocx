@@ -18,6 +18,7 @@ import { isApiConfigured } from '@/src/ai/config';
 import {
   canRunAiRewrite,
   getDisplayText,
+  hasReadyText,
   needsAiRewrite,
   needsManualReview,
 } from '@/src/ai/displayText';
@@ -108,6 +109,8 @@ const LIST_THUMB = 72;
 
 type ViewMode = 'cards' | 'grid' | 'list';
 type PageFilter = 'all' | 'manual';
+type PageSort = 'system' | 'book';
+type PageSortDir = 'asc' | 'desc';
 type MainTab = 'pages' | 'toc';
 
 const MAIN_TABS = [
@@ -121,8 +124,107 @@ const VIEW_MODE_OPTIONS = [
   { id: 'cards', icon: 'image' as const, label: 'Karty' },
 ] as const;
 
+const PAGE_SORT_OPTIONS = [
+  {
+    id: 'book' as const,
+    icon: 'bookOpen' as const,
+    label: 'Strony z książki',
+    detail: 'Sortowanie po numerze wydrukowanym na stronie',
+  },
+  {
+    id: 'system' as const,
+    icon: 'notes' as const,
+    label: 'Strony z systemu',
+    detail: 'Sortowanie po numerze strony w Scanocx',
+  },
+] as const;
+
+const PAGE_SORT_DIR_OPTIONS = [
+  {
+    id: 'asc' as const,
+    icon: 'sort' as const,
+    label: 'A–Z',
+    detail: 'Od najmniejszego numeru',
+  },
+  {
+    id: 'desc' as const,
+    icon: 'sort' as const,
+    label: 'Z–A',
+    detail: 'Od największego numeru',
+  },
+] as const;
+
+const ROMAN_VALUES: Record<string, number> = {
+  i: 1,
+  v: 5,
+  x: 10,
+  l: 50,
+  c: 100,
+  d: 500,
+  m: 1000,
+};
+
+function romanToInt(value: string): number | null {
+  const lower = value.toLowerCase();
+  if (!/^[ivxlcdm]+$/.test(lower)) return null;
+  let total = 0;
+  let prev = 0;
+  for (let i = lower.length - 1; i >= 0; i -= 1) {
+    const current = ROMAN_VALUES[lower[i]] ?? 0;
+    if (current < prev) total -= current;
+    else total += current;
+    prev = current;
+  }
+  return total;
+}
+
+/** Klucz sortowania po numerze z książki (arabskie / rzymskie); brak numeru → na koniec. */
+function printedPageSortKey(value: string | null): {
+  missing: boolean;
+  numeric: number;
+  raw: string;
+} {
+  const raw = value?.trim() ?? '';
+  if (!raw) {
+    return { missing: true, numeric: Number.POSITIVE_INFINITY, raw: '' };
+  }
+  if (/^\d{1,6}$/.test(raw)) {
+    return { missing: false, numeric: Number.parseInt(raw, 10), raw };
+  }
+  const roman = romanToInt(raw);
+  if (roman != null) {
+    return { missing: false, numeric: roman, raw: raw.toLowerCase() };
+  }
+  return { missing: false, numeric: Number.POSITIVE_INFINITY, raw: raw.toLowerCase() };
+}
+
+function comparePagesBySort(
+  a: BookPage,
+  b: BookPage,
+  sort: PageSort,
+  dir: PageSortDir
+): number {
+  const sign = dir === 'desc' ? -1 : 1;
+
+  if (sort === 'system') {
+    return sign * (a.index - b.index);
+  }
+
+  const ka = printedPageSortKey(a.printedPageNumber);
+  const kb = printedPageSortKey(b.printedPageNumber);
+  // Bez numeru zawsze na końcu, niezależnie od kierunku.
+  if (ka.missing !== kb.missing) return ka.missing ? 1 : -1;
+  if (ka.numeric !== kb.numeric) return sign * (ka.numeric - kb.numeric);
+  const byRaw = ka.raw.localeCompare(kb.raw, 'pl');
+  if (byRaw !== 0) return sign * byRaw;
+  return sign * (a.index - b.index);
+}
+
 function ocrOverlayCopy(page: BookPage): string {
   if (page.ocrStatus === 'pending') return 'Odczytywanie tekstu…';
+  if (page.aiOnly && page.ocrStatus === 'idle' && page.aiStatus === 'idle') {
+    return 'Skan wielu stron — uruchom Analizę AI, aby odczytać tekst.';
+  }
   if (page.ocrStatus === 'idle') {
     return 'Zdjęcie zapisane — zaloguj się i uruchom odczyt tekstu.';
   }
@@ -183,7 +285,10 @@ export default function BookDetailScreen() {
   const [mainTab, setMainTab] = useState<MainTab>('pages');
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [pageFilter, setPageFilter] = useState<PageFilter>('all');
+  const [pageSort, setPageSort] = useState<PageSort>('system');
+  const [pageSortDir, setPageSortDir] = useState<PageSortDir>('desc');
   const [viewOptionsOpen, setViewOptionsOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
   const [menuPage, setMenuPage] = useState<BookPage | null>(null);
   const [analysisTarget, setAnalysisTarget] = useState<BookPage | null>(null);
   const [bookMenu, setBookMenu] = useState(false);
@@ -303,24 +408,22 @@ export default function BookDetailScreen() {
     });
   }, [book?.id, id, isLoggedIn]);
 
-  const pagesNewestFirst = useMemo(() => {
+  const sortedPages = useMemo(() => {
     if (!book) return [];
-    return [...book.pages].sort((a, b) => {
-      const byDate = b.createdAt.localeCompare(a.createdAt);
-      if (byDate !== 0) return byDate;
-      return b.index - a.index;
-    });
-  }, [book]);
+    return [...book.pages].sort((a, b) =>
+      comparePagesBySort(a, b, pageSort, pageSortDir)
+    );
+  }, [book, pageSort, pageSortDir]);
 
   const manualReviewCount = useMemo(
-    () => pagesNewestFirst.filter(needsManualReview).length,
-    [pagesNewestFirst]
+    () => sortedPages.filter(needsManualReview).length,
+    [sortedPages]
   );
 
   const visiblePages = useMemo(() => {
-    if (pageFilter !== 'manual') return pagesNewestFirst;
-    return pagesNewestFirst.filter(needsManualReview);
-  }, [pageFilter, pagesNewestFirst]);
+    if (pageFilter !== 'manual') return sortedPages;
+    return sortedPages.filter(needsManualReview);
+  }, [pageFilter, sortedPages]);
 
   useEffect(() => {
     if (pageFilter === 'manual' && manualReviewCount === 0) {
@@ -329,16 +432,18 @@ export default function BookDetailScreen() {
   }, [manualReviewCount, pageFilter]);
 
   const doneCount = useMemo(
-    () => (book ? book.pages.filter((page) => page.ocrStatus === 'done').length : 0),
+    () => (book ? book.pages.filter(hasReadyText).length : 0),
     [book]
   );
 
-  /** Zdjęcia bez OCR (idle / błąd) — czekają na odczyt. */
+  /** Zdjęcia bez OCR (idle / błąd) — czekają na odczyt (bez stron aiOnly). */
   const ocrPendingCount = useMemo(
     () =>
       book
         ? book.pages.filter(
-            (page) => page.ocrStatus === 'idle' || page.ocrStatus === 'error'
+            (page) =>
+              !page.aiOnly &&
+              (page.ocrStatus === 'idle' || page.ocrStatus === 'error')
           ).length
         : 0,
     [book]
@@ -387,7 +492,7 @@ export default function BookDetailScreen() {
     if (aiEligibleCount === 0) {
       Alert.alert(
         'Analiza i Korekta AI',
-        'Brak stron z gotowym OCR do analizy. Najpierw odczytaj tekst ze zdjęć.'
+        'Brak stron ze zdjęciem do analizy. Najpierw zeskanuj lub dodaj strony.'
       );
       return;
     }
@@ -402,6 +507,7 @@ export default function BookDetailScreen() {
     }
     const waiting = book.pages.filter(
       (page) =>
+        !page.aiOnly &&
         (page.ocrStatus === 'idle' || page.ocrStatus === 'error') &&
         Boolean(page.imageUri?.trim())
     );
@@ -491,6 +597,14 @@ export default function BookDetailScreen() {
 
   const onRetryOcr = useCallback(() => {
     if (!book || !menuPage) return;
+    if (menuPage.aiOnly) {
+      closePageMenu();
+      Alert.alert(
+        'Odczyt tekstu',
+        'Ta strona to skan wielu stron — użyj Analizy AI zamiast zwykłego OCR.',
+      );
+      return;
+    }
     if (!isLoggedIn) {
       closePageMenu();
       router.push('/login');
@@ -813,6 +927,7 @@ export default function BookDetailScreen() {
 
   const queuesBusy = ocrQueue.total > 0 || aiQueue.total > 0;
   const showStatusPromo = !queuesBusy && (showOcrPromo || showAiLimitPromo || aiPendingCount > 0);
+  const sortIsCustom = pageSort !== 'system' || pageSortDir !== 'desc';
 
   if (loading && !book) {
     return <Loader label="Otwieram książkę…" />;
@@ -835,24 +950,24 @@ export default function BookDetailScreen() {
       <ScanQueueCard />
       <AiQueueCard />
       {showStatusPromo ? (
-        showOcrPromo ? (
-          <OcrPromoCard
-            count={ocrPendingCount}
-            onPress={onRunBookOcr}
-            disabled={actionBusy}
-          />
-        ) : showAiLimitPromo ? (
+        showAiLimitPromo ? (
           <AiLimitPromoCard
             count={aiPendingCount}
             onPress={() => router.push('/subscribe')}
           />
-        ) : (
+        ) : aiPendingCount > 0 ? (
           <AiPromoCard
             count={aiPendingCount}
             onPress={openAiMenu}
             disabled={actionBusy}
           />
-        )
+        ) : showOcrPromo ? (
+          <OcrPromoCard
+            count={ocrPendingCount}
+            onPress={onRunBookOcr}
+            disabled={actionBusy}
+          />
+        ) : null
       ) : null}
     </>
   );
@@ -882,7 +997,7 @@ export default function BookDetailScreen() {
               : 'Nagłówki z analizy AI'
             : pageFilter === 'manual'
               ? `Do sprawdzenia: ${manualReviewCount}`
-              : `${pagesLabel(book.pages.length)} · OCR ${doneCount}`
+              : `${pagesLabel(book.pages.length)} · odczytane ${doneCount}`
         }
       />
 
@@ -985,6 +1100,17 @@ export default function BookDetailScreen() {
                 ) : null}
                 <Pressable
                   accessibilityRole="button"
+                  accessibilityLabel="Sortowanie stron"
+                  onPress={() => setSortOpen(true)}
+                  style={[styles.toolIconBtn, sortIsCustom && styles.toolIconBtnActive]}>
+                  <Icon
+                    name="sort"
+                    size={18}
+                    color={sortIsCustom ? colors.primary : colors.inkSoft}
+                  />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
                   accessibilityLabel="Widok i opcje"
                   onPress={() => setViewOptionsOpen(true)}
                   style={styles.toolIconBtn}>
@@ -995,13 +1121,13 @@ export default function BookDetailScreen() {
           ) : null}
 
           <FlatList
-            key={`${viewMode}:${pageFilter}`}
+            key={`${viewMode}:${pageFilter}:${pageSort}:${pageSortDir}`}
             data={visiblePages}
             keyExtractor={(item) => item.id}
             renderItem={renderPage}
             numColumns={viewMode === 'grid' ? GRID_COLUMNS : 1}
             columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
-            extraData={`${showOcr}:${viewMode}:${pageFilter}`}
+            extraData={`${showOcr}:${viewMode}:${pageFilter}:${pageSort}:${pageSortDir}`}
             showsVerticalScrollIndicator={false}
             removeClippedSubviews={false}
             windowSize={viewMode === 'cards' ? 5 : 9}
@@ -1075,6 +1201,44 @@ export default function BookDetailScreen() {
           <DockButton icon="more" label="Więcej" onPress={() => setBookMenu(true)} />
         </View>
       </View>
+
+      <Sheet
+        visible={sortOpen}
+        onClose={() => setSortOpen(false)}
+        eyebrow="Sortowanie"
+        title="Uporządkuj listę stron">
+        <SheetGroup>
+          {PAGE_SORT_OPTIONS.map((option, index) => (
+            <View key={option.id}>
+              {index > 0 ? <SheetDivider /> : null}
+              <Row
+                icon={option.icon}
+                label={option.label}
+                detail={option.detail}
+                tone={pageSort === option.id ? 'primary' : 'default'}
+                onPress={() => setPageSort(option.id)}
+              />
+            </View>
+          ))}
+        </SheetGroup>
+        <SheetGroup>
+          {PAGE_SORT_DIR_OPTIONS.map((option, index) => (
+            <View key={option.id}>
+              {index > 0 ? <SheetDivider /> : null}
+              <Row
+                icon={option.icon}
+                label={option.label}
+                detail={option.detail}
+                tone={pageSortDir === option.id ? 'primary' : 'default'}
+                onPress={() => {
+                  setPageSortDir(option.id);
+                  setSortOpen(false);
+                }}
+              />
+            </View>
+          ))}
+        </SheetGroup>
+      </Sheet>
 
       <Sheet
         visible={viewOptionsOpen}
@@ -1161,19 +1325,34 @@ export default function BookDetailScreen() {
           />
           <SheetDivider />
           <Row icon="rotate" label="Obróć 180°" detail="Obraca zdjęcie i czyta je ponownie" onPress={onRotate180} />
-          <SheetDivider />
-          <Row
-            icon="ai"
-            label={menuPage?.ocrStatus === 'idle' ? 'Odczytaj tekst' : 'Ponowny odczyt'}
-            detail={
-              menuPage?.ocrStatus === 'idle'
-                ? isLoggedIn
-                  ? 'Uruchom OCR dla tego zdjęcia (limit free: 50/mies.)'
-                  : 'Wymaga zalogowania'
-                : 'Odczytaj tekst ze zdjęcia od nowa'
-            }
-            onPress={onRetryOcr}
-          />
+          {!menuPage?.aiOnly ? (
+            <>
+              <SheetDivider />
+              <Row
+                icon="ai"
+                label={menuPage?.ocrStatus === 'idle' ? 'Odczytaj tekst' : 'Ponowny odczyt'}
+                detail={
+                  menuPage?.ocrStatus === 'idle'
+                    ? isLoggedIn
+                      ? 'Uruchom OCR dla tego zdjęcia (limit free: 50/mies.)'
+                      : 'Wymaga zalogowania'
+                    : 'Odczytaj tekst ze zdjęcia od nowa'
+                }
+                onPress={onRetryOcr}
+              />
+            </>
+          ) : (
+            <>
+              <SheetDivider />
+              <Row
+                icon="ai"
+                label="Odczyt tylko AI"
+                detail="Skan wielu stron — uruchom Analizę AI"
+                disabled
+                onPress={() => undefined}
+              />
+            </>
+          )}
           <SheetDivider />
           <Row icon="gallery" label="Wgraj nowe zdjęcie" onPress={onReplacePhoto} />
         </SheetGroup>
@@ -1208,7 +1387,7 @@ export default function BookDetailScreen() {
             detail={
               aiPendingCount > 0
                 ? `${aiPendingCount} stron jeszcze bez AI`
-                : 'Wszystkie odczytane strony mają już korektę'
+                : 'Wszystkie strony ze zdjęciem mają już korektę'
             }
             tone="primary"
             disabled={aiPendingCount === 0 || actionBusy}
@@ -1220,8 +1399,8 @@ export default function BookDetailScreen() {
             label="Analiza wszystkich stron"
             detail={
               aiEligibleCount > 0
-                ? `${aiEligibleCount} stron z OCR — także już gotowych`
-                : 'Brak stron z gotowym OCR'
+                ? `${aiEligibleCount} stron ze zdjęciem — także już gotowych`
+                : 'Brak stron ze zdjęciem'
             }
             disabled={aiEligibleCount === 0 || actionBusy}
             onPress={() => onRunBookAi('all')}
@@ -1289,8 +1468,8 @@ export default function BookDetailScreen() {
             label="Analiza i Korekta AI całej książki"
             detail={
               aiEligibleCount > 0
-                ? `${aiPendingCount} bez korekty · ${aiEligibleCount} z OCR`
-                : 'Brak stron z gotowym OCR'
+                ? `${aiPendingCount} bez korekty · ${aiEligibleCount} ze zdjęciem`
+                : 'Brak stron ze zdjęciem'
             }
             disabled={!hasPages || actionBusy || aiEligibleCount === 0}
             onPress={() => {

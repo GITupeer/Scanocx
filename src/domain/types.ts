@@ -58,6 +58,11 @@ export type BookPage = {
   aiStatus: AiStatus;
   /** Ostatni komunikat błędu Gemini; null gdy brak / sukces. */
   aiError: string | null;
+  /**
+   * Skan rozkładówki / wielu stron — bez OCR ML Kit; odczyt tylko przez AI.
+   * Opcjonalne dla starszych stron w meta.json.
+   */
+  aiOnly?: boolean;
   createdAt: string;
 };
 

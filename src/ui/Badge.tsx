@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 
 import type { AiStatus, OcrStatus } from '@/src/domain/types';
@@ -22,13 +22,22 @@ type Props = {
   label: string;
   tone?: BadgeTone;
   icon?: IconName;
+  loading?: boolean;
   size?: 'sm' | 'md';
   style?: StyleProp<ViewStyle>;
 };
 
-export function Badge({ label, tone = 'neutral', icon, size = 'sm', style }: Props) {
+export function Badge({
+  label,
+  tone = 'neutral',
+  icon,
+  loading = false,
+  size = 'sm',
+  style,
+}: Props) {
   const t = TONES[tone];
   const small = size === 'sm';
+  const iconSize = small ? 12 : 14;
 
   return (
     <View
@@ -43,7 +52,15 @@ export function Badge({ label, tone = 'neutral', icon, size = 'sm', style }: Pro
         },
         style,
       ]}>
-      {icon ? <Icon name={icon} size={small ? 12 : 14} color={t.fg} /> : null}
+      {loading ? (
+        <ActivityIndicator
+          size="small"
+          color={t.fg}
+          style={{ transform: [{ scale: small ? 0.7 : 0.85 }] }}
+        />
+      ) : icon ? (
+        <Icon name={icon} size={iconSize} color={t.fg} />
+      ) : null}
       <Text
         numberOfLines={1}
         style={[styles.label, { color: t.fg, fontSize: small ? 11.5 : 13 }]}>
@@ -70,12 +87,21 @@ export function OcrStatusBadge({
   style?: StyleProp<ViewStyle>;
 }) {
   const spec = OCR_BADGE[status];
-  return <Badge label={spec.label} tone={spec.tone} icon={spec.icon} size={size} style={style} />;
+  return (
+    <Badge
+      label={spec.label}
+      tone={spec.tone}
+      icon={spec.icon}
+      loading={status === 'pending'}
+      size={size}
+      style={style}
+    />
+  );
 }
 
 const AI_BADGE: Record<AiStatus, { label: string; tone: BadgeTone; icon: IconName }> = {
   idle: { label: 'Bez AI', tone: 'neutral', icon: 'pending' },
-  pending: { label: 'AI…', tone: 'primary', icon: 'ai' },
+  pending: { label: 'AI', tone: 'primary', icon: 'ai' },
   done: { label: 'AI', tone: 'success', icon: 'ai' },
   error: { label: 'Błąd AI', tone: 'danger', icon: 'alert' },
 };
@@ -90,7 +116,16 @@ export function AiStatusBadge({
   style?: StyleProp<ViewStyle>;
 }) {
   const spec = AI_BADGE[status];
-  return <Badge label={spec.label} tone={spec.tone} icon={spec.icon} size={size} style={style} />;
+  return (
+    <Badge
+      label={spec.label}
+      tone={spec.tone}
+      icon={spec.icon}
+      loading={status === 'pending'}
+      size={size}
+      style={style}
+    />
+  );
 }
 
 const styles = StyleSheet.create({

@@ -3,7 +3,7 @@
     "name": "Scanocx",
     "slug": "Scanocx",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "scanocx",
     "userInterfaceStyle": "light",
@@ -12,7 +12,7 @@
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/f01e576d-18c7-492e-a682-1a552c5c6246",
+      "url": "https://u.expo.dev/905d562c-86f1-445a-844e-87ba648faf24",
       "fallbackToCacheTimeout": 0
     },
     "android": {

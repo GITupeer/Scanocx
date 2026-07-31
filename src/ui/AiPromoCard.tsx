@@ -16,7 +16,7 @@ type Props = {
 };
 
 /**
- * Zachęta do uruchomienia korekty AI, gdy książka ma strony z OCR bez poprawki.
+ * Zachęta do uruchomienia korekty AI, gdy książka ma strony ze zdjęciem bez poprawki.
  */
 export function AiPromoCard({ count, onPress, disabled, style }: Props) {
   if (count <= 0) return null;
@@ -26,8 +26,8 @@ export function AiPromoCard({ count, onPress, disabled, style }: Props) {
   const title = `${label} ${ready} do korekty AI`;
   const detail =
     count === 1
-      ? 'Korekta w chmurze wygładzi tekst ze skanu — literówki, układ i czytelność.'
-      : 'Uruchom korektę w chmurze — AI dopracuje odczytany tekst.';
+      ? 'Korekta w chmurze odczyta i wygładzi tekst ze skanu — literówki, układ i czytelność.'
+      : 'Uruchom korektę w chmurze — AI odczyta i dopracuje tekst ze zdjęć.';
 
   return (
     <View style={[styles.wrap, style]}>

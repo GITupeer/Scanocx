@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
+import { resolvePageOcrStatus } from '@/src/ai/displayText';
 import type {
   AiAnalysis,
   AiStatus,
@@ -39,29 +40,30 @@ function syncRemoteQuietly(task: Promise<unknown>): void {
 }
 
 function normalizePage(page: BookPage): BookPage {
-  const ocrStatus = page.ocrStatus ?? 'idle';
   const rawQuality = page.ocrQuality ?? null;
   const ocrQuality =
     rawQuality && rawQuality.confidence
       ? { confidence: rawQuality.confidence }
       : null;
+  const ocrText = page.ocrText ?? '';
+  const aiText = page.aiText ?? '';
+  const aiStatus = page.aiStatus ?? 'idle';
   return {
     ...page,
     imageUri: page.imageUri?.trim() ? page.imageUri : null,
     originalImageUri: page.originalImageUri?.trim() ? page.originalImageUri : null,
-    ocrText: page.ocrText ?? '',
-    aiText: page.aiText ?? '',
+    ocrText,
+    aiText,
     printedPageNumber: page.printedPageNumber ?? null,
     ocrQuality,
     aiAnalysis: normalizeAiAnalysis(page.aiAnalysis),
-    ocrStatus:
-      ocrStatus === 'idle' ||
-      ocrStatus === 'pending' ||
-      ocrStatus === 'done' ||
-      ocrStatus === 'error'
-        ? ocrStatus
-        : 'idle',
-    aiStatus: page.aiStatus ?? 'idle',
+    ocrStatus: resolvePageOcrStatus({
+      ocrText,
+      aiText,
+      aiStatus,
+      ocrStatus: page.ocrStatus,
+    }),
+    aiStatus,
     aiError: page.aiError ?? null,
   };
 }
@@ -313,7 +315,7 @@ export async function addPageFromImage(
 export async function addPageFromCameraUri(
   bookId: string,
   cameraUri: string,
-  options: { originalUri?: string | null } = {}
+  options: { originalUri?: string | null; aiOnly?: boolean } = {}
 ): Promise<{ book: Book; page: BookPage }> {
   const book = await readBook(bookId);
   await ensureDir(bookPagesDir(bookId));
@@ -336,6 +338,7 @@ export async function addPageFromCameraUri(
     printedPageNumber: null,
     ocrQuality: null,
     ocrStatus: 'idle',
+    ...(options.aiOnly ? { aiOnly: true } : {}),
     createdAt: new Date().toISOString(),
   };
 
@@ -421,7 +424,7 @@ export async function updatePagesAi(
   book.pages = book.pages.map((page) => {
     const patch = byId.get(page.id);
     if (!patch) return page;
-    return {
+    const next = {
       ...page,
       aiText: patch.aiText ?? page.aiText,
       aiStatus: patch.aiStatus ?? page.aiStatus,
@@ -434,6 +437,10 @@ export async function updatePagesAi(
         patch.printedPageNumber !== undefined
           ? patch.printedPageNumber
           : (page.printedPageNumber ?? null),
+    };
+    return {
+      ...next,
+      ocrStatus: resolvePageOcrStatus(next),
     };
   });
   const saved = await writeBook(book);
@@ -528,7 +535,7 @@ export async function replacePageFromCameraUri(
   bookId: string,
   pageId: string,
   cameraUri: string,
-  options: { originalUri?: string | null } = {}
+  options: { originalUri?: string | null; aiOnly?: boolean } = {}
 ): Promise<{ book: Book; page: BookPage }> {
   const book = await readBook(bookId);
   const existing = book.pages.find((p) => p.id === pageId);
@@ -557,6 +564,7 @@ export async function replacePageFromCameraUri(
     printedPageNumber: null,
     ocrQuality: null,
     ocrStatus: 'idle',
+    aiOnly: options.aiOnly === true ? true : undefined,
   };
 
   book.pages = book.pages.map((p) => (p.id === pageId ? page : p));

@@ -1,12 +1,12 @@
 import * as api from '@/src/api/endpoints';
 import type { ApiBook, ApiBookPage, ApiBookSummary } from '@/src/api/types';
+import { resolvePageOcrStatus } from '@/src/ai/displayText';
 import type {
   AiAnalysis,
   AiStatus,
   Book,
   BookPage,
   BookSummary,
-  OcrStatus,
 } from '@/src/domain/types';
 import { hasAuthToken, pushBookToRemote } from '@/src/library/remote';
 import {
@@ -55,12 +55,6 @@ function mapAiStatus(raw: string | null | undefined): AiStatus {
   if (raw === 'pending' || raw === 'done' || raw === 'error' || raw === 'idle') {
     return raw;
   }
-  return 'idle';
-}
-
-function mapOcrStatusFromText(ocrText: string, aiStatus: AiStatus): OcrStatus {
-  if (ocrText.trim()) return 'done';
-  if (aiStatus === 'done' || aiStatus === 'pending') return 'done';
   return 'idle';
 }
 
@@ -161,7 +155,12 @@ export async function mapApiPageToBookPage(
     printedPageNumber: page.printed_page_number ?? null,
     ocrQuality: localHint?.ocrQuality ?? null,
     aiAnalysis,
-    ocrStatus: mapOcrStatusFromText(ocrText, aiStatus),
+    ocrStatus: resolvePageOcrStatus({
+      ocrText,
+      aiText,
+      aiStatus,
+      ocrStatus: localHint?.ocrStatus,
+    }),
     aiStatus,
     aiError: aiStatus === 'error' ? (localHint?.aiError ?? null) : null,
     createdAt: page.created_at ?? localHint?.createdAt ?? new Date().toISOString(),

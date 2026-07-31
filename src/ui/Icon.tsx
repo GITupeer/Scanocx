@@ -32,6 +32,7 @@ const ICONS = {
   rotate: { ios: 'arrow.clockwise', android: 'rotate_right', glyph: '↻' },
   refresh: { ios: 'arrow.triangle.2.circlepath', android: 'refresh', glyph: '↺' },
   swap: { ios: 'arrow.left.arrow.right', android: 'swap_horiz', glyph: '⇄' },
+  sort: { ios: 'arrow.up.arrow.down', android: 'swap_vert', glyph: '⇅' },
   plus: { ios: 'plus', android: 'add', glyph: '＋' },
   close: { ios: 'xmark', android: 'close', glyph: '✕' },
   check: { ios: 'checkmark', android: 'check', glyph: '✓' },

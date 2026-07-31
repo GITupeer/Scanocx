@@ -265,6 +265,13 @@ export default function PageDetailScreen() {
 
   const onRetryOcr = async () => {
     if (!id || !page) return;
+    if (page.aiOnly) {
+      Alert.alert(
+        'Odczyt tekstu',
+        'Ta strona to skan wielu stron — użyj Analizy AI zamiast zwykłego OCR.',
+      );
+      return;
+    }
     if (!isLoggedIn) {
       router.push('/login');
       return;
@@ -639,8 +646,12 @@ export default function PageDetailScreen() {
           <Row
             icon="frame"
             label="Dopasuj rogi"
-            detail="Ręcznie ustaw kadr i odczytaj tekst ponownie"
-            disabled={busy}
+            detail={
+              page.aiOnly
+                ? 'Niedostępne dla skanu wielu stron'
+                : 'Ręcznie ustaw kadr i odczytaj tekst ponownie'
+            }
+            disabled={busy || !!page.aiOnly}
             onPress={() => {
               setMenuOpen(false);
               router.push(`/book/${id}/crop?pageId=${page.id}`);
@@ -657,21 +668,25 @@ export default function PageDetailScreen() {
               void onRetryAi();
             }}
           />
-          <View style={styles.sheetDivider} />
-          <Row
-            icon="notes"
-            label={page.ocrStatus === 'idle' ? 'Odczytaj tekst' : 'Pion + odczyt'}
-            detail={
-              page.ocrStatus === 'idle'
-                ? 'Uruchom OCR dla tego zdjęcia'
-                : 'Wyprostuj stronę i odczytaj tekst ponownie'
-            }
-            disabled={busy}
-            onPress={() => {
-              setMenuOpen(false);
-              void onRetryOcr();
-            }}
-          />
+          {!page.aiOnly ? (
+            <>
+              <View style={styles.sheetDivider} />
+              <Row
+                icon="notes"
+                label={page.ocrStatus === 'idle' ? 'Odczytaj tekst' : 'Pion + odczyt'}
+                detail={
+                  page.ocrStatus === 'idle'
+                    ? 'Uruchom OCR dla tego zdjęcia'
+                    : 'Wyprostuj stronę i odczytaj tekst ponownie'
+                }
+                disabled={busy}
+                onPress={() => {
+                  setMenuOpen(false);
+                  void onRetryOcr();
+                }}
+              />
+            </>
+          ) : null}
           <View style={styles.sheetDivider} />
           <Row
             icon="stats"

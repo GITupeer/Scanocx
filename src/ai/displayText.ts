@@ -1,4 +1,4 @@
-import type { BookPage } from '@/src/domain/types';
+import type { BookPage, OcrStatus } from '@/src/domain/types';
 
 /** Preferuj tekst AI, gdy korekta się udała; w przeciwnym razie surowy OCR. */
 export function getDisplayText(page: BookPage): string {
@@ -8,9 +8,30 @@ export function getDisplayText(page: BookPage): string {
   return page.ocrText;
 }
 
-/** Strona nadaje się do korekty AI (ma zdjęcie i zakończony OCR). */
+/** Jest gotowy tekst do pokazania (OCR albo udane AI). */
+export function hasReadyText(page: Pick<BookPage, 'ocrText' | 'aiText' | 'aiStatus'>): boolean {
+  return (
+    Boolean(page.ocrText?.trim()) ||
+    (page.aiStatus === 'done' && Boolean(page.aiText?.trim()))
+  );
+}
+
+/**
+ * Status plakietki „Odczytany”: tylko gdy jest realny tekst.
+ * AI w toku / bez wyniku nie oznacza strony jako odczytanej.
+ */
+export function resolvePageOcrStatus(
+  page: Pick<BookPage, 'ocrText' | 'aiText' | 'aiStatus' | 'ocrStatus'>
+): OcrStatus {
+  if (hasReadyText(page)) return 'done';
+  const status = page.ocrStatus ?? 'idle';
+  if (status === 'pending' || status === 'error') return status;
+  return 'idle';
+}
+
+/** Strona nadaje się do korekty AI (ma lokalne zdjęcie — AI dostaje skan, nie OCR). */
 export function canRunAiRewrite(page: BookPage): boolean {
-  return Boolean(page.imageUri?.trim()) && page.ocrStatus === 'done';
+  return Boolean(page.imageUri?.trim());
 }
 
 /** Strona jeszcze nie ma udanej korekty AI. */

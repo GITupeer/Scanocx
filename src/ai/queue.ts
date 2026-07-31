@@ -877,7 +877,7 @@ export async function enqueuePendingAiForBook(bookId: string): Promise<number> {
   return startCloudAnalysis(bookId, undefined, false);
 }
 
-/** Korekta AI wszystkich stron z gotowym OCR — także tych już oznaczonych jako done. */
+/** Korekta AI wszystkich stron ze zdjęciem — także tych już oznaczonych jako done. */
 export async function enqueueAllAiForBook(bookId: string): Promise<number> {
   if (!isApiConfigured()) return 0;
   const book = await getBook(bookId);
