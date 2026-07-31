@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isApiConfigured } from '@/src/ai/config';
 import {
   canRunAiRewrite,
+  formatPrintedPageNumbersLabel,
   getAiDetectedPageCount,
   getDisplayText,
   hasReadyText,
@@ -804,8 +805,10 @@ export default function BookDetailScreen() {
 
           <View style={styles.pageHeaderText}>
             <Text style={styles.pageTitle}>Strona {item.index}</Text>
-            {item.printedPageNumber ? (
-              <Text style={styles.pageSubtitle}>w książce: {item.printedPageNumber}</Text>
+            {formatPrintedPageNumbersLabel(item) ? (
+              <Text style={styles.pageSubtitle}>
+                w książce: {formatPrintedPageNumbersLabel(item)}
+              </Text>
             ) : null}
             {needsManualReview(item) ? (
               <Text style={styles.reviewFlag}>Niska jakość skanu</Text>
@@ -910,32 +913,45 @@ export default function BookDetailScreen() {
   );
 
   const renderListPage = useCallback(
-    ({ item }: { item: BookPage }) => (
-      <Pressable
-        style={({ pressed }) => [styles.listRow, pressed && styles.pageHeaderPressed]}
-        onPress={() => openPageMenu(item)}
-        disabled={actionBusy}>
-        {item.imageUri ? (
-          <Image source={{ uri: item.imageUri }} style={styles.listThumb} resizeMode="cover" />
-        ) : (
-          <PageImagePlaceholder compact style={styles.listThumb} />
-        )}
-        <View style={styles.listText}>
-          <Text style={styles.pageTitle}>Strona {item.index}</Text>
-          {item.printedPageNumber ? (
-            <Text style={styles.pageSubtitle}>w książce: {item.printedPageNumber}</Text>
-          ) : null}
-          {needsManualReview(item) ? (
-            <Text style={styles.reviewFlag}>Niska jakość skanu</Text>
-          ) : null}
-        </View>
-        <View style={styles.pageBadges}>
-          <OcrStatusBadge status={item.ocrStatus} />
-          <AiStatusBadge status={item.aiStatus} />
-        </View>
-        <Icon name="more" size={18} color={colors.faint} />
-      </Pressable>
-    ),
+    ({ item }: { item: BookPage }) => {
+      const aiPages = getAiDetectedPageCount(item);
+      return (
+        <Pressable
+          style={({ pressed }) => [styles.listRow, pressed && styles.pageHeaderPressed]}
+          onPress={() => openPageMenu(item)}
+          disabled={actionBusy}>
+          <View style={styles.listThumbWrap}>
+            {item.imageUri ? (
+              <Image source={{ uri: item.imageUri }} style={styles.listThumb} resizeMode="cover" />
+            ) : (
+              <PageImagePlaceholder compact style={styles.listThumb} />
+            )}
+            {aiPages > 1 ? (
+              <View style={styles.aiPagesBadgeList} pointerEvents="none">
+                <Icon name="bookOpen" size={10} color={colors.white} />
+                <Text style={styles.aiPagesBadgeText}>{aiPages}</Text>
+              </View>
+            ) : null}
+          </View>
+          <View style={styles.listText}>
+            <Text style={styles.pageTitle}>Strona {item.index}</Text>
+            {formatPrintedPageNumbersLabel(item) ? (
+              <Text style={styles.pageSubtitle}>
+                w książce: {formatPrintedPageNumbersLabel(item)}
+              </Text>
+            ) : null}
+            {needsManualReview(item) ? (
+              <Text style={styles.reviewFlag}>Niska jakość skanu</Text>
+            ) : null}
+          </View>
+          <View style={styles.pageBadges}>
+            <OcrStatusBadge status={item.ocrStatus} />
+            <AiStatusBadge status={item.aiStatus} />
+          </View>
+          <Icon name="more" size={18} color={colors.faint} />
+        </Pressable>
+      );
+    },
     [actionBusy, openPageMenu]
   );
 
@@ -1634,13 +1650,35 @@ function AiAnalysisDialog({
           <AnalysisRow label="Jakość OCR" value={formatScore(analysis.ocrQuality)} />
           <AnalysisRow label="Spójność po korekcie" value={formatScore(analysis.coherence)} />
           <AnalysisRow
-            label="Numer strony"
-            value={
-              analysis.pageNumber
-                ? `${analysis.pageNumber} (usunięty z tekstu)`
-                : 'Nie wykryto'
+            label={
+              analysis.pages && analysis.pages.length > 1
+                ? 'Numery stron'
+                : 'Numer strony'
             }
-            muted={!analysis.pageNumber}
+            value={
+              analysis.pages && analysis.pages.length > 1
+                ? (() => {
+                    const nums = analysis.pages
+                      .map((p, i) =>
+                        p.pageNumber?.trim()
+                          ? `${i + 1}: ${p.pageNumber.trim()}`
+                          : null
+                      )
+                      .filter(Boolean);
+                    return nums.length > 0
+                      ? `${nums.join(' · ')} (usunięte z tekstu)`
+                      : 'Nie wykryto';
+                  })()
+                : analysis.pageNumber
+                  ? `${analysis.pageNumber} (usunięty z tekstu)`
+                  : 'Nie wykryto'
+            }
+            muted={
+              !(
+                analysis.pageNumber ||
+                analysis.pages?.some((p) => p.pageNumber?.trim())
+              )
+            }
           />
           <AnalysisRow
             label="Tokeny wejściowe"
@@ -2014,11 +2052,28 @@ const styles = StyleSheet.create({
     borderColor: colors.line,
     ...shadow.soft,
   },
-  listThumb: {
+  listThumbWrap: {
     width: LIST_THUMB,
     height: LIST_THUMB,
     borderRadius: radius.md,
+    overflow: 'hidden',
     backgroundColor: colors.surfaceSunken,
+  },
+  listThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  aiPagesBadgeList: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(16, 191, 160, 0.92)',
   },
   listText: {
     flex: 1,

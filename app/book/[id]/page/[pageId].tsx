@@ -16,7 +16,7 @@ import {
 } from '@/src/ai/queue';
 import { useAuth } from '@/src/auth/AuthProvider';
 import type { AiAnalysis, Book, BookPage } from '@/src/domain/types';
-import { isLandscapeUri } from '@/src/images/ensurePortrait';
+import { getImageSize, isLandscapeUri } from '@/src/images/ensurePortrait';
 import { getLibraryBook } from '@/src/library/books';
 import { cancelOcrForPage, runPageOcrExclusive, useOcrQueue } from '@/src/ocr/queue';
 import { OcrAuthRequiredError, OcrQuotaExceededError } from '@/src/ocr/quota';
@@ -85,6 +85,8 @@ export default function PageDetailScreen() {
   const [aiText, setAiText] = useState('');
   /** Osobne teksty AI gdy Gemini wykryło wiele stron na jednym zdjęciu. */
   const [aiPageTexts, setAiPageTexts] = useState<string[]>([]);
+  /** Numery w książce odpowiadające kolejnym stronom z AI. */
+  const [aiPageNumbers, setAiPageNumbers] = useState<string[]>([]);
   const [printedPageNumber, setPrintedPageNumber] = useState('');
   const [textTab, setTextTab] = useState<TextTab>('ai');
   const [imagePreview, setImagePreview] = useState<ImagePreview>('cropped');
@@ -97,6 +99,8 @@ export default function PageDetailScreen() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [imageSizeLabel, setImageSizeLabel] = useState<string | null>(null);
+  /** Proporcje aktualnego podglądu — karta dopasowuje wysokość do zdjęcia. */
+  const [imageAspectRatio, setImageAspectRatio] = useState<number | null>(null);
   const ocrQueue = useOcrQueue();
   const aiQueue = useAiQueue();
 
@@ -169,8 +173,22 @@ export default function PageDetailScreen() {
           ? [found.aiText]
           : [];
     setAiPageTexts(split);
+    const nums =
+      found.aiAnalysis?.pages && found.aiAnalysis.pages.length > 0
+        ? found.aiAnalysis.pages.map((p) => p.pageNumber?.trim() || '')
+        : [];
+    setAiPageNumbers(
+      nums.length > 0
+        ? nums
+        : split.length > 1
+          ? split.map(() => '')
+          : []
+    );
     setAiText(found.aiText);
-    setPrintedPageNumber(found.printedPageNumber ?? '');
+    const joinedNums = nums.filter(Boolean).join(', ');
+    setPrintedPageNumber(
+      joinedNums || found.printedPageNumber || ''
+    );
     setTextTab(
       found.aiOnly || (found.aiStatus === 'done' && found.aiText.trim())
         ? 'ai'
@@ -221,20 +239,32 @@ export default function PageDetailScreen() {
         : page?.imageUri;
     if (!uri) {
       setImageSizeLabel(null);
+      setImageAspectRatio(null);
       return;
     }
     let cancelled = false;
     void (async () => {
       try {
-        const info = await FileSystem.getInfoAsync(uri);
+        const [info, size] = await Promise.all([
+          FileSystem.getInfoAsync(uri),
+          getImageSize(uri),
+        ]);
         if (cancelled) return;
         if (info.exists && 'size' in info && typeof info.size === 'number') {
           setImageSizeLabel(formatBytes(info.size));
         } else {
           setImageSizeLabel(null);
         }
+        if (size.width > 0 && size.height > 0) {
+          setImageAspectRatio(size.width / size.height);
+        } else {
+          setImageAspectRatio(null);
+        }
       } catch {
-        if (!cancelled) setImageSizeLabel(null);
+        if (!cancelled) {
+          setImageSizeLabel(null);
+          setImageAspectRatio(null);
+        }
       }
     })();
     return () => {
@@ -259,14 +289,6 @@ export default function PageDetailScreen() {
     if (!id || !pageId || !page) return;
     setSaving(true);
     try {
-      const normalized = printedPageNumber.trim() || null;
-      let updated = await updatePageOcr(id, pageId, {
-        ocrText,
-        printedPageNumber: normalized,
-        ocrStatus: 'done',
-        resetAi: false,
-      });
-
       const texts =
         aiPageTexts.length > 0
           ? aiPageTexts
@@ -279,19 +301,38 @@ export default function PageDetailScreen() {
         texts.length > 0
           ? texts.map((text, i) => {
               const prev = prevPages?.[i];
+              const num =
+                (aiPageNumbers[i] ?? prev?.pageNumber ?? '').trim() || null;
               return {
                 text: text.trim(),
                 title: prev?.title ?? null,
                 subtitle: prev?.subtitle ?? null,
-                pageNumber: prev?.pageNumber ?? null,
+                pageNumber: num,
                 ocrQuality: prev?.ocrQuality ?? page.aiAnalysis?.ocrQuality ?? 0,
                 coherence: prev?.coherence ?? page.aiAnalysis?.coherence ?? 0,
               };
             })
           : undefined;
+      const joinedNums =
+        nextPages && nextPages.length > 0
+          ? nextPages
+              .map((p) => p.pageNumber?.trim() || '')
+              .filter(Boolean)
+              .join(', ')
+          : printedPageNumber.trim();
+      const normalized = joinedNums || null;
+
+      let updated = await updatePageOcr(id, pageId, {
+        ocrText,
+        printedPageNumber: normalized,
+        ocrStatus: 'done',
+        resetAi: false,
+      });
+
       const nextAnalysis = page.aiAnalysis
         ? {
             ...page.aiAnalysis,
+            pageNumber: normalized,
             ...(nextPages && nextPages.length > 0 ? { pages: nextPages } : {}),
           }
         : nextPages && nextPages.length > 0
@@ -300,7 +341,7 @@ export default function PageDetailScreen() {
               subtitle: null,
               ocrQuality: 0,
               coherence: 0,
-              pageNumber: null,
+              pageNumber: normalized,
               promptTokens: null,
               outputTokens: null,
               totalTokens: null,
@@ -313,6 +354,7 @@ export default function PageDetailScreen() {
         aiStatus: joined.trim() ? 'done' : 'idle',
         aiError: null,
         aiAnalysis: nextAnalysis,
+        printedPageNumber: normalized,
       });
       const found = updated.pages.find((p) => p.id === pageId) ?? null;
       if (found) applyPage(updated, found);
@@ -480,7 +522,9 @@ export default function PageDetailScreen() {
       <AppBar
         title={`Strona ${page.index}`}
         subtitle={`${position} z ${pagesOrdered.length}${
-          page.printedPageNumber ? ` · w książce ${page.printedPageNumber}` : ''
+          printedPageNumber.trim()
+            ? ` · w książce ${printedPageNumber.trim()}`
+            : ''
         }`}
         right={
           <IconButton
@@ -611,14 +655,45 @@ export default function PageDetailScreen() {
               </View>
             ) : null}
 
-            <TextField
-              label="Numer wydrukowany na stronie"
-              value={printedPageNumber}
-              onChangeText={setPrintedPageNumber}
-              placeholder="np. 12 albo xiv"
-              icon="notes"
-              hint="Numer z marginesu jest wykrywany automatycznie i usuwany z tekstu. Możesz go poprawić."
-            />
+            {aiPageTexts.length > 1 ? (
+              <View style={styles.pageNumbersStack}>
+                <Text style={styles.pageNumbersHeading}>Numery w książce</Text>
+                <Text style={styles.pageNumbersHint}>
+                  Wykryte numery z marginesów — po jednym na każdą stronę z rozkładówki.
+                </Text>
+                {aiPageTexts.map((_, index) => (
+                  <TextField
+                    key={`ai-page-num-${index}`}
+                    label={`Strona ${index + 1}`}
+                    value={aiPageNumbers[index] ?? ''}
+                    onChangeText={(value) => {
+                      setAiPageNumbers((prev) => {
+                        const next = [...prev];
+                        while (next.length < aiPageTexts.length) next.push('');
+                        next[index] = value;
+                        const joined = next
+                          .map((n) => n.trim())
+                          .filter(Boolean)
+                          .join(', ');
+                        setPrintedPageNumber(joined);
+                        return next;
+                      });
+                    }}
+                    placeholder="np. 12 albo xiv"
+                    icon="notes"
+                  />
+                ))}
+              </View>
+            ) : (
+              <TextField
+                label="Numer wydrukowany na stronie"
+                value={printedPageNumber}
+                onChangeText={setPrintedPageNumber}
+                placeholder="np. 12 albo xiv"
+                icon="notes"
+                hint="Numer z marginesu jest wykrywany automatycznie i usuwany z tekstu. Możesz go poprawić."
+              />
+            )}
 
             {!page.aiOnly ? (
               <View style={styles.tabRow}>
@@ -912,13 +987,35 @@ function AiAnalysisDialog({
           <AnalysisRow label="Jakość OCR" value={formatScore(analysis.ocrQuality)} />
           <AnalysisRow label="Spójność po korekcie" value={formatScore(analysis.coherence)} />
           <AnalysisRow
-            label="Numer strony"
-            value={
-              analysis.pageNumber
-                ? `${analysis.pageNumber} (usunięty z tekstu)`
-                : 'Nie wykryto'
+            label={
+              analysis.pages && analysis.pages.length > 1
+                ? 'Numery stron'
+                : 'Numer strony'
             }
-            muted={!analysis.pageNumber}
+            value={
+              analysis.pages && analysis.pages.length > 1
+                ? (() => {
+                    const nums = analysis.pages
+                      .map((p, i) =>
+                        p.pageNumber?.trim()
+                          ? `${i + 1}: ${p.pageNumber.trim()}`
+                          : null
+                      )
+                      .filter(Boolean);
+                    return nums.length > 0
+                      ? `${nums.join(' · ')} (usunięte z tekstu)`
+                      : 'Nie wykryto';
+                  })()
+                : analysis.pageNumber
+                  ? `${analysis.pageNumber} (usunięty z tekstu)`
+                  : 'Nie wykryto'
+            }
+            muted={
+              !(
+                analysis.pageNumber ||
+                analysis.pages?.some((p) => p.pageNumber?.trim())
+              )
+            }
           />
           <AnalysisRow
             label="Tokeny wejściowe"
@@ -1026,6 +1123,20 @@ const styles = StyleSheet.create({
   },
   aiPagesStack: {
     gap: space.lg,
+  },
+  pageNumbersStack: {
+    gap: space.md,
+  },
+  pageNumbersHeading: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  pageNumbersHint: {
+    fontSize: 12.5,
+    lineHeight: 17,
+    color: colors.muted,
+    marginTop: -space.xs,
   },
   previewTabRow: {
     flexDirection: 'row',

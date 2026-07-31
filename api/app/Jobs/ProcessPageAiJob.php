@@ -78,20 +78,36 @@ class ProcessPageAiJob implements ShouldQueue
                     ]];
                 }
 
+                $pageNumbers = [];
+                foreach ($pagesMeta as $pageMeta) {
+                    if (! is_array($pageMeta)) {
+                        continue;
+                    }
+                    $num = trim((string) ($pageMeta['page_number'] ?? ''));
+                    if ($num !== '') {
+                        $pageNumbers[] = $num;
+                    }
+                }
+                $joinedPageNumbers = $pageNumbers !== []
+                    ? implode(', ', $pageNumbers)
+                    : ($result['page_number'] !== null && $result['page_number'] !== ''
+                        ? (string) $result['page_number']
+                        : null);
+
                 $page->ai_meta = [
                     'provider' => $provider,
                     'title' => $result['title'],
                     'subtitle' => $result['subtitle'],
                     'ocr_quality' => $result['ocr_quality'],
                     'coherence' => $result['coherence'],
-                    'page_number' => $result['page_number'],
+                    'page_number' => $joinedPageNumbers,
                     'prompt_tokens' => $result['prompt_tokens'] ?? null,
                     'output_tokens' => $result['output_tokens'] ?? null,
                     'total_tokens' => $result['total_tokens'] ?? null,
                     'pages' => $pagesMeta,
                 ];
-                if ($result['page_number'] !== null && $result['page_number'] !== '') {
-                    $page->printed_page_number = $result['page_number'];
+                if ($joinedPageNumbers !== null && $joinedPageNumbers !== '') {
+                    $page->printed_page_number = $joinedPageNumbers;
                 }
                 $page->save();
 

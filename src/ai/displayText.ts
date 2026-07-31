@@ -8,6 +8,28 @@ export function getAiDetectedPageCount(page: BookPage): number {
   return 0;
 }
 
+/** Numery stron w książce — z AI pages[] albo z printedPageNumber. */
+export function getPrintedPageNumbers(page: BookPage): string[] {
+  const fromAi = page.aiAnalysis?.pages
+    ?.map((p) => p.pageNumber?.trim() || '')
+    .filter(Boolean);
+  if (fromAi && fromAi.length > 0) return fromAi;
+
+  const raw = page.printedPageNumber?.trim();
+  if (!raw) return [];
+  return raw
+    .split(/[,;·|/]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+/** Etykieta „w książce: …” z wszystkimi numerami. */
+export function formatPrintedPageNumbersLabel(page: BookPage): string | null {
+  const nums = getPrintedPageNumbers(page);
+  if (nums.length === 0) return null;
+  return nums.join(', ');
+}
+
 /** Preferuj tekst AI, gdy korekta się udała; w przeciwnym razie surowy OCR. */
 export function getDisplayText(page: BookPage): string {
   if (page.aiStatus === 'done') {
