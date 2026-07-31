@@ -32,7 +32,7 @@ ANALIZA JSON (dla każdej pozycji w pages):
 - page_number: numer z marginesu lub null; jeśli wykryty — USUŃ go z corrected_text.
 - ocr_quality (0.00–1.00): czytelność SKANU tej strony. ≥0.85 ostry; 0.50–0.84 drobne problemy; <0.50 gdy jakakolwiek istotna część nieczytelna (im gorzej, tym niżej; zgadywanie → <0.50).
 - coherence (0.00–1.00): spójność corrected_text po korekcie.
-- corners: cztery rogi papieru tej strony na zdjęciu (top_left, top_right, bottom_right, bottom_left). Współrzędne znormalizowane 0.0–1.0 względem całego obrazu (x: lewo→prawo, y: góra→dół). Dla rozkładówki każda strona ma własny czworokąt; dla jednej strony — rogi tej kartki.
+- corners: cztery rogi papieru tej strony na zdjęciu (top_left, top_right, bottom_right, bottom_left). Współrzędne w PROCENTACH 0–100 względem całego obrazu (x: 0=lewa, 100=prawa; y: 0=góra, 100=dół). Przykład lewej strony rozkładówki: top_left≈(2,5), top_right≈(48,5), bottom_right≈(48,95), bottom_left≈(2,95). NIE zwracaj samych 0/100 dla wszystkich rogów — podaj realne pozycje krawędzi papieru.
 PROMPT;
 
     /**
@@ -81,7 +81,7 @@ PROMPT;
                     [
                         'role' => 'user',
                         'parts' => [
-                            ['text' => 'Odczytaj i popraw tekst ze zdjęcia książki. Jeśli widać wiele stron, zwróć je wszystkie w pages (kolejność lewa→prawa). Dla każdej strony podaj corners (rogi papieru, współrzędne 0–1). Zwróć JSON zgodnie ze schematem.'],
+                            ['text' => 'Odczytaj i popraw tekst ze zdjęcia książki. Jeśli widać wiele stron, zwróć je wszystkie w pages (kolejność lewa→prawa). Dla każdej strony podaj corners — rogi papieru w procentach 0–100 (x,y) względem całego zdjęcia. Zwróć JSON zgodnie ze schematem.'],
                             [
                                 'inline_data' => [
                                     'mime_type' => $mimeType,
@@ -146,12 +146,12 @@ PROMPT;
                                         ],
                                         'corners' => [
                                             'type' => 'OBJECT',
-                                            'description' => 'Rogi papieru tej strony na zdjęciu; x/y w zakresie 0–1 względem całego obrazu.',
+                                            'description' => 'Rogi papieru tej strony; x/y w PROCENTACH 0–100 względem całego obrazu.',
                                             'properties' => [
-                                                'top_left' => self::cornerPointSchema('Lewy górny róg strony.'),
-                                                'top_right' => self::cornerPointSchema('Prawy górny róg strony.'),
-                                                'bottom_right' => self::cornerPointSchema('Prawy dolny róg strony.'),
-                                                'bottom_left' => self::cornerPointSchema('Lewy dolny róg strony.'),
+                                                'top_left' => self::cornerPointSchema('Lewy górny róg strony (procenty 0–100).'),
+                                                'top_right' => self::cornerPointSchema('Prawy górny róg strony (procenty 0–100).'),
+                                                'bottom_right' => self::cornerPointSchema('Prawy dolny róg strony (procenty 0–100).'),
+                                                'bottom_left' => self::cornerPointSchema('Lewy dolny róg strony (procenty 0–100).'),
                                             ],
                                             'required' => [
                                                 'top_left',
@@ -445,11 +445,11 @@ PROMPT;
             'properties' => [
                 'x' => [
                     'type' => 'NUMBER',
-                    'description' => 'Współrzędna X 0.0–1.0 (0 = lewa krawędź obrazu).',
+                    'description' => 'Współrzędna X w procentach 0–100 (0 = lewa krawędź, 100 = prawa).',
                 ],
                 'y' => [
                     'type' => 'NUMBER',
-                    'description' => 'Współrzędna Y 0.0–1.0 (0 = górna krawędź obrazu).',
+                    'description' => 'Współrzędna Y w procentach 0–100 (0 = góra, 100 = dół).',
                 ],
             ],
             'required' => ['x', 'y'],
@@ -457,6 +457,8 @@ PROMPT;
     }
 
     /**
+     * Zwraca corners w skali 0–1 (wewnętrznie). Wejście: 0–1 albo 0–100 (%).
+     *
      * @return array{
      *   top_left: array{x: float, y: float},
      *   top_right: array{x: float, y: float},
@@ -471,34 +473,34 @@ PROMPT;
         }
 
         $keys = ['top_left', 'top_right', 'bottom_right', 'bottom_left'];
-        $out = [];
+        $rawPoints = [];
         foreach ($keys as $key) {
-            $point = $this->parseCornerPoint($raw[$key] ?? null);
-            if ($point === null) {
+            $point = $raw[$key] ?? null;
+            if (! is_array($point) || ! is_numeric($point['x'] ?? null) || ! is_numeric($point['y'] ?? null)) {
                 return null;
             }
-            $out[$key] = $point;
+            $rawPoints[$key] = [
+                'x' => (float) $point['x'],
+                'y' => (float) $point['y'],
+            ];
+        }
+
+        $max = 0.0;
+        foreach ($rawPoints as $p) {
+            $max = max($max, $p['x'], $p['y']);
+        }
+        // Gemini często zwraca procenty 0–100; >1 → dziel przez 100.
+        $scale = $max > 1.0001 ? 100.0 : 1.0;
+
+        $out = [];
+        foreach ($keys as $key) {
+            $out[$key] = [
+                'x' => $this->clampUnit($rawPoints[$key]['x'] / $scale),
+                'y' => $this->clampUnit($rawPoints[$key]['y'] / $scale),
+            ];
         }
 
         return $out;
-    }
-
-    /**
-     * @return array{x: float, y: float}|null
-     */
-    private function parseCornerPoint(mixed $raw): ?array
-    {
-        if (! is_array($raw)) {
-            return null;
-        }
-        if (! is_numeric($raw['x'] ?? null) || ! is_numeric($raw['y'] ?? null)) {
-            return null;
-        }
-
-        return [
-            'x' => $this->clampUnit((float) $raw['x']),
-            'y' => $this->clampUnit((float) $raw['y']),
-        ];
     }
 
     private function clampUnit(float $n): float

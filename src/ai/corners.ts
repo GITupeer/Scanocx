@@ -5,23 +5,49 @@ function clampUnit(n: number): number {
   return Math.round(Math.min(1, Math.max(0, n)) * 10000) / 10000;
 }
 
-function parsePoint(raw: unknown): AiCornerPoint | null {
+function readXY(raw: unknown): { x: number; y: number } | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
   if (typeof o.x !== 'number' || typeof o.y !== 'number') return null;
-  return { x: clampUnit(o.x), y: clampUnit(o.y) };
+  if (!Number.isFinite(o.x) || !Number.isFinite(o.y)) return null;
+  return { x: o.x, y: o.y };
 }
 
-/** Mapuje corners z API (snake_case) lub lokalne (camelCase). */
+/**
+ * Gemini często zwraca 0–100 (%), a nie 0–1.
+ * Jeśli jakakolwiek współrzędna > 1 → traktuj jako procenty i dziel przez 100.
+ */
+function normalizePoints(
+  points: Array<{ x: number; y: number }>
+): AiCornerPoint[] {
+  const max = Math.max(...points.flatMap((p) => [p.x, p.y]));
+  const scale = max > 1.0001 ? 100 : 1;
+  return points.map((p) => ({
+    x: clampUnit(p.x / scale),
+    y: clampUnit(p.y / scale),
+  }));
+}
+
+/** Mapuje corners z API (snake_case) lub lokalne (camelCase) → 0–1. */
 export function parseAiPageCorners(raw: unknown): AiPageCorners | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
-  const topLeft = parsePoint(o.topLeft ?? o.top_left);
-  const topRight = parsePoint(o.topRight ?? o.top_right);
-  const bottomRight = parsePoint(o.bottomRight ?? o.bottom_right);
-  const bottomLeft = parsePoint(o.bottomLeft ?? o.bottom_left);
-  if (!topLeft || !topRight || !bottomRight || !bottomLeft) return null;
+  const rawPoints = [
+    readXY(o.topLeft ?? o.top_left),
+    readXY(o.topRight ?? o.top_right),
+    readXY(o.bottomRight ?? o.bottom_right),
+    readXY(o.bottomLeft ?? o.bottom_left),
+  ];
+  if (rawPoints.some((p) => p == null)) return null;
+  const [topLeft, topRight, bottomRight, bottomLeft] = normalizePoints(
+    rawPoints as Array<{ x: number; y: number }>
+  );
   return { topLeft, topRight, bottomRight, bottomLeft };
+}
+
+/** Format do UI: procenty 0–100. */
+export function formatCornerPercent(p: AiCornerPoint): string {
+  return `${(p.x * 100).toFixed(1)}%, ${(p.y * 100).toFixed(1)}%`;
 }
 
 export function aiPageCornersToRemote(
