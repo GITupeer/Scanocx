@@ -156,10 +156,23 @@ export async function mapApiPageToBookPage(
   page: ApiBookPage,
   localHint?: BookPage | null
 ): Promise<BookPage> {
-  const aiStatus = mapAiStatus(page.ai_status);
+  const remoteAiStatus = mapAiStatus(page.ai_status);
   const ocrText = page.ocr_text ?? '';
-  const aiText = page.ai_text ?? '';
-  const aiAnalysis = mapApiAiMeta(page.ai_meta);
+  const remoteAiText = page.ai_text ?? '';
+  const remoteAiAnalysis = mapApiAiMeta(page.ai_meta);
+
+  // Lokalny „done” wygrywa ze stale remote „pending” (opóźniony sync / wyścig z jobem).
+  const preferLocalDone =
+    localHint?.aiStatus === 'done' &&
+    Boolean(localHint.aiText?.trim() || localHint.aiAnalysis?.pages?.length) &&
+    (remoteAiStatus === 'pending' || remoteAiStatus === 'idle');
+
+  const aiStatus = preferLocalDone ? 'done' : remoteAiStatus;
+  const aiText = preferLocalDone ? (localHint?.aiText ?? '') : remoteAiText;
+  const aiAnalysis = preferLocalDone
+    ? (localHint?.aiAnalysis ?? remoteAiAnalysis)
+    : remoteAiAnalysis;
+
   const imageUri = await resolveLocalPageImageUri(
     bookId,
     page.local_id,

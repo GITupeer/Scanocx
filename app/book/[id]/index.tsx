@@ -347,10 +347,9 @@ export default function BookDetailScreen() {
     }, [isLoggedIn, refresh, refreshAuth])
   );
 
-  // Każda strona zamknięta przez kolejkę zmienia meta.json — przeczytaj je ponownie,
-  // żeby plakietki i tekst OCR/AI aktualizowały się na żywo.
-  // Nie odświeżaj podczas przygotowania/wysyłki (prepared) — to wywoływało
-  // Maximum update depth przy setkach stron.
+  // Każda strona zamknięta przez kolejkę zmienia lokalny meta.json — czytaj lokalnie,
+  // NIE getLibraryBook (remote potrafi nadpisać lokalny done stale pendingiem).
+  // Nie odświeżaj podczas przygotowania/wysyłki (prepared) — Maximum update depth.
   const lastOcrCompletedRef = useRef(ocrQueue.completed);
   const lastAiCompletedRef = useRef(aiQueue.completed);
   useEffect(() => {
@@ -368,11 +367,14 @@ export default function BookDetailScreen() {
     }
     lastOcrCompletedRef.current = ocrQueue.completed;
     lastAiCompletedRef.current = aiQueue.completed;
-    void refresh();
+    if (!id) return;
+    void getBook(id)
+      .then((data) => setBook(data))
+      .catch(() => undefined);
     if (aiQueue.completed > 0 && aiQueue.phase !== 'preparing' && aiQueue.phase !== 'sending') {
       void refreshAuth();
     }
-  }, [aiQueue.completed, aiQueue.phase, ocrQueue.completed, refresh, refreshAuth]);
+  }, [aiQueue.completed, aiQueue.phase, id, ocrQueue.completed, refreshAuth]);
 
   // Strony, których analiza nie zdążyła się wykonać (np. apka zamknięta w trakcie),
   // wracają do kolejki — tylko dla zalogowanych, w limicie OCR. Duplikaty odrzuca kolejka.
@@ -402,13 +404,17 @@ export default function BookDetailScreen() {
     })();
   }, [actionBusy, book, isLoggedIn]);
 
+  const pendingAiCount = useMemo(
+    () => book?.pages.filter((page) => page.aiStatus === 'pending').length ?? 0,
+    [book]
+  );
+
   // Korekta AI jest w chmurze — po restarcie wznów polling, jeśli strony nadal czekają.
+  // Nie zależ od całego `book` (każdy setBook z postępu kolejki restartowałby resume).
   useEffect(() => {
-    if (!book || actionBusy || !isLoggedIn) return;
-    const pendingAi = book.pages.some((page) => page.aiStatus === 'pending');
-    if (!pendingAi) return;
+    if (!book?.id || actionBusy || !isLoggedIn || pendingAiCount === 0) return;
     void resumePendingCloudAi(book.id);
-  }, [actionBusy, book, isLoggedIn]);
+  }, [actionBusy, book?.id, isLoggedIn, pendingAiCount]);
 
   // Stare „Przekroczono limit AI” na stronach → idle (bez błędu, promo card u góry).
   useEffect(() => {

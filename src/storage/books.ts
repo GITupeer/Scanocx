@@ -434,9 +434,10 @@ export async function updatePageAi(
     aiError?: string | null;
     aiAnalysis?: AiAnalysis | null;
     printedPageNumber?: string | null;
-  }
+  },
+  options?: { syncRemote?: boolean }
 ): Promise<Book> {
-  return updatePagesAi(bookId, [{ pageId, ...patch }]);
+  return updatePagesAi(bookId, [{ pageId, ...patch }], options);
 }
 
 /** Jednorazowy zapis AI dla wielu stron (jeden writeBook). */
@@ -449,12 +450,14 @@ export async function updatePagesAi(
     aiError?: string | null;
     aiAnalysis?: AiAnalysis | null;
     printedPageNumber?: string | null;
-  }>
+  }>,
+  options?: { syncRemote?: boolean }
 ): Promise<Book> {
   if (patches.length === 0) {
     return readBook(bookId);
   }
 
+  const syncRemote = options?.syncRemote !== false;
   const byId = new Map(patches.map((patch) => [patch.pageId, patch]));
   const book = await readBook(bookId);
   book.pages = book.pages.map((page) => {
@@ -480,10 +483,12 @@ export async function updatePagesAi(
     };
   });
   const saved = await writeBook(book);
-  for (const patch of patches) {
-    const updatedPage = saved.pages.find((p) => p.id === patch.pageId);
-    if (updatedPage) {
-      syncRemoteQuietly(pushPageOcrToRemote(bookId, updatedPage));
+  if (syncRemote) {
+    for (const patch of patches) {
+      const updatedPage = saved.pages.find((p) => p.id === patch.pageId);
+      if (updatedPage) {
+        syncRemoteQuietly(pushPageOcrToRemote(bookId, updatedPage));
+      }
     }
   }
   return saved;

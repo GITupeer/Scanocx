@@ -257,8 +257,9 @@ async function applyJobResults(
 ): Promise<void> {
   for (const job of jobs) {
     if (appliedDone.has(job.id)) continue;
+    if (!job.page_local_id) continue;
 
-    if (job.status === 'done' && job.ai_text) {
+    if (job.status === 'done') {
       appliedDone.add(job.id);
       const meta = job.ai_meta;
       const pages =
@@ -278,6 +279,9 @@ async function applyJobResults(
               })
               .filter((p): p is NonNullable<typeof p> => p != null)
           : undefined;
+      const textFromPages =
+        pages && pages.length > 0 ? pages.map((p) => p.text).join('\n\n\n') : '';
+      const aiText = (job.ai_text ?? '').trim() || textFromPages;
       const analysis =
         meta != null
           ? {
@@ -296,7 +300,7 @@ async function applyJobResults(
           : null;
       await withBookMetaLock(() =>
         updatePageAi(bookId, job.page_local_id, {
-          aiText: job.ai_text ?? '',
+          aiText,
           aiStatus: 'done',
           aiError: null,
           aiAnalysis: analysis,
@@ -309,10 +313,15 @@ async function applyJobResults(
     } else if (job.status === 'failed') {
       appliedDone.add(job.id);
       await withBookMetaLock(() =>
-        updatePageAi(bookId, job.page_local_id, {
-          aiStatus: 'error',
-          aiError: job.error ?? 'Analiza i Korekta AI nie powiodła się.',
-        })
+        updatePageAi(
+          bookId,
+          job.page_local_id,
+          {
+            aiStatus: 'error',
+            aiError: job.error ?? 'Analiza i Korekta AI nie powiodła się.',
+          },
+          { syncRemote: false }
+        )
       );
     }
   }
@@ -325,13 +334,21 @@ async function clearStalePendingPages(
 ): Promise<void> {
   const known = new Set(knownPageIds);
   const book = await getBook(bookId);
-  for (const page of book.pages) {
-    if (page.aiStatus !== 'pending') continue;
-    if (known.has(page.id)) continue;
-    await withBookMetaLock(() =>
-      updatePageAi(bookId, page.id, { aiStatus: 'idle', aiError: null })
-    );
-  }
+  const staleIds = book.pages
+    .filter((page) => page.aiStatus === 'pending' && !known.has(page.id))
+    .map((page) => page.id);
+  if (staleIds.length === 0) return;
+  await withBookMetaLock(() =>
+    updatePagesAi(
+      bookId,
+      staleIds.map((pageId) => ({
+        pageId,
+        aiStatus: 'idle' as const,
+        aiError: null,
+      })),
+      { syncRemote: false }
+    )
+  );
 }
 
 async function pollUntilDone(
@@ -402,6 +419,32 @@ async function resolveChunkTotals(
   return totals;
 }
 
+/** Po zakończonej sesji: lokalne pending z tej fali, których job jest done/failed, domknij. */
+async function settleRemainingPending(
+  bookId: string,
+  knownPageIds: Set<string>
+): Promise<void> {
+  const book = await getBook(bookId);
+  const stillPending = book.pages.filter(
+    (page) => page.aiStatus === 'pending' && knownPageIds.has(page.id)
+  );
+  if (stillPending.length === 0) return;
+
+  // Joby z terminalnych batchy powinny już być zastosowane w applyJobResults.
+  // Jeśli coś zostało (np. pusty ai_text w odpowiedzi) — nie trzymaj pending w nieskończoność.
+  await withBookMetaLock(() =>
+    updatePagesAi(
+      bookId,
+      stillPending.map((page) => ({
+        pageId: page.id,
+        aiStatus: (page.aiText.trim() ? 'done' : 'idle') as 'done' | 'idle',
+        aiError: null,
+      })),
+      { syncRemote: false }
+    )
+  );
+}
+
 function beginFinish(
   bookId: string,
   batchIds: number[],
@@ -436,6 +479,7 @@ function beginFinish(
       }
 
       await clearStalePendingPages(bookId, knownPageIds);
+      await settleRemainingPending(bookId, knownPageIds);
     } catch (error) {
       lastError = error instanceof Error ? error.message : 'Błąd odczytu statusu kolejki.';
       publish();
@@ -564,12 +608,21 @@ async function findBatchesForPendingBook(
 
 async function resetOrphanPendingPages(bookId: string): Promise<void> {
   const book = await getBook(bookId);
-  for (const page of book.pages) {
-    if (page.aiStatus !== 'pending') continue;
-    await withBookMetaLock(() =>
-      updatePageAi(bookId, page.id, { aiStatus: 'idle', aiError: null })
-    );
-  }
+  const pendingIds = book.pages
+    .filter((page) => page.aiStatus === 'pending')
+    .map((page) => page.id);
+  if (pendingIds.length === 0) return;
+  await withBookMetaLock(() =>
+    updatePagesAi(
+      bookId,
+      pendingIds.map((pageId) => ({
+        pageId,
+        aiStatus: 'idle' as const,
+        aiError: null,
+      })),
+      { syncRemote: false }
+    )
+  );
 }
 
 /**
@@ -651,22 +704,41 @@ async function clearAiQuotaErrors(
   bookId: string,
   pages: Array<{ id: string; aiStatus: string; aiError: string | null }>
 ): Promise<void> {
-  for (const page of pages) {
-    if (page.aiStatus !== 'error' || !isAiQuotaErrorMessage(page.aiError)) continue;
-    await withBookMetaLock(() =>
-      updatePageAi(bookId, page.id, { aiStatus: 'idle', aiError: null })
-    );
-  }
+  const ids = pages
+    .filter((page) => page.aiStatus === 'error' && isAiQuotaErrorMessage(page.aiError))
+    .map((page) => page.id);
+  if (ids.length === 0) return;
+  await withBookMetaLock(() =>
+    updatePagesAi(
+      bookId,
+      ids.map((pageId) => ({
+        pageId,
+        aiStatus: 'idle' as const,
+        aiError: null,
+      })),
+      { syncRemote: false }
+    )
+  );
 }
 
 async function resetPagesToIdle(bookId: string, pageIds: string[]): Promise<void> {
-  for (const pageId of pageIds) {
-    const fresh = (await getBook(bookId)).pages.find((p) => p.id === pageId);
-    if (!fresh || fresh.aiStatus === 'done') continue;
-    await withBookMetaLock(() =>
-      updatePageAi(bookId, pageId, { aiStatus: 'idle', aiError: null })
-    );
-  }
+  const book = await getBook(bookId);
+  const ids = pageIds.filter((pageId) => {
+    const fresh = book.pages.find((p) => p.id === pageId);
+    return Boolean(fresh && fresh.aiStatus !== 'done');
+  });
+  if (ids.length === 0) return;
+  await withBookMetaLock(() =>
+    updatePagesAi(
+      bookId,
+      ids.map((pageId) => ({
+        pageId,
+        aiStatus: 'idle' as const,
+        aiError: null,
+      })),
+      { syncRemote: false }
+    )
+  );
 }
 
 async function startCloudAnalysis(
@@ -748,6 +820,7 @@ async function startCloudAnalysis(
   startTicker();
   publish();
 
+  // Tylko lokalnie — sync pending/null na API wyścigował z jobami i kasował gotowe ai_text.
   await withBookMetaLock(() =>
     updatePagesAi(
       bookId,
@@ -756,7 +829,8 @@ async function startCloudAnalysis(
         aiStatus: 'pending' as const,
         aiError: null,
         aiAnalysis: null,
-      }))
+      })),
+      { syncRemote: false }
     )
   );
 

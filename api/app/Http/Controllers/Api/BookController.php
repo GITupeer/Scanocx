@@ -206,14 +206,33 @@ class BookController extends Controller
         if (array_key_exists('printed_page_number', $data)) {
             $page->printed_page_number = $data['printed_page_number'];
         }
-        if (array_key_exists('ai_text', $data)) {
-            $page->ai_text = $data['ai_text'];
-        }
-        if (array_key_exists('ai_status', $data)) {
-            $page->ai_status = (string) ($data['ai_status'] ?? 'idle');
-        }
-        if (array_key_exists('ai_meta', $data)) {
-            $page->ai_meta = $data['ai_meta'];
+        $currentAiStatus = (string) ($page->ai_status ?? 'idle');
+        $incomingAiStatus = array_key_exists('ai_status', $data)
+            ? (string) ($data['ai_status'] ?? 'idle')
+            : null;
+
+        // Nie pozwalaj opóźnionym synczotom klienta nadpisać gotowego wyniku AI
+        // (np. stare push'e ai_status=pending / ai_text=null po zakończeniu joba).
+        $protectDoneAi = $currentAiStatus === 'done'
+            && (
+                $incomingAiStatus === 'pending'
+                || (
+                    array_key_exists('ai_text', $data)
+                    && ($data['ai_text'] === null || $data['ai_text'] === '')
+                    && filled($page->ai_text)
+                )
+            );
+
+        if (! $protectDoneAi) {
+            if (array_key_exists('ai_text', $data)) {
+                $page->ai_text = $data['ai_text'];
+            }
+            if ($incomingAiStatus !== null) {
+                $page->ai_status = $incomingAiStatus;
+            }
+            if (array_key_exists('ai_meta', $data)) {
+                $page->ai_meta = $data['ai_meta'];
+            }
         }
 
         $page->save();
