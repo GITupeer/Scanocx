@@ -21,11 +21,13 @@ class BookTextController extends Controller
         }
 
         $sections = $texts->buildSections($book);
+        $toc = $texts->buildTableOfContents($book, $sections);
         $withText = collect($sections)->filter(fn (array $s) => $s['source'] !== 'empty')->count();
 
         return view('book-text', [
             'book' => $book,
             'sections' => $sections,
+            'toc' => $toc,
             'pageCount' => $book->pages->count(),
             'sectionCount' => count($sections),
             'withTextCount' => $withText,
