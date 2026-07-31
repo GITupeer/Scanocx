@@ -101,6 +101,12 @@ export type AiBatchJobMeta = {
     page_number: string | null;
     ocr_quality: number;
     coherence: number;
+    bounds?: {
+      left: number;
+      top: number;
+      right: number;
+      bottom: number;
+    } | null;
     corners?: {
       top_left: { x: number; y: number };
       top_right: { x: number; y: number };

@@ -32,7 +32,7 @@ ANALIZA JSON (dla każdej pozycji w pages):
 - page_number: numer z marginesu lub null; jeśli wykryty — USUŃ go z corrected_text.
 - ocr_quality (0.00–1.00): czytelność SKANU tej strony. ≥0.85 ostry; 0.50–0.84 drobne problemy; <0.50 gdy jakakolwiek istotna część nieczytelna (im gorzej, tym niżej; zgadywanie → <0.50).
 - coherence (0.00–1.00): spójność corrected_text po korekcie.
-- corners: cztery rogi papieru tej strony na zdjęciu (top_left, top_right, bottom_right, bottom_left). Współrzędne w PROCENTACH 0–100 względem całego obrazu (x: 0=lewa, 100=prawa; y: 0=góra, 100=dół). Przykład lewej strony rozkładówki: top_left≈(2,5), top_right≈(48,5), bottom_right≈(48,95), bottom_left≈(2,95). NIE zwracaj samych 0/100 dla wszystkich rogów — podaj realne pozycje krawędzi papieru.
+- bounds: prostokąt papieru tej strony na zdjęciu w PROCENTACH 0–100 całego obrazu: left, top, right, bottom (left < right, top < bottom). Przykład lewej strony rozkładówki: left=2, top=4, right=49, bottom=96. Prawej: left=51, top=4, right=98, bottom=96. Jedna strona prawie na cały kadr: left=3, top=3, right=97, bottom=97. NIGDY nie ustawiaj wszystkich na 0 albo 100 — podaj realne krawędzie kartki.
 PROMPT;
 
     /**
@@ -81,7 +81,7 @@ PROMPT;
                     [
                         'role' => 'user',
                         'parts' => [
-                            ['text' => 'Odczytaj i popraw tekst ze zdjęcia książki. Jeśli widać wiele stron, zwróć je wszystkie w pages (kolejność lewa→prawa). Dla każdej strony podaj corners — rogi papieru w procentach 0–100 (x,y) względem całego zdjęcia. Zwróć JSON zgodnie ze schematem.'],
+                            ['text' => 'Odczytaj i popraw tekst ze zdjęcia książki. Jeśli widać wiele stron, zwróć je wszystkie w pages (kolejność lewa→prawa). Dla każdej strony podaj bounds (left,top,right,bottom) w procentach 0–100 całego zdjęcia — prostokąt obejmujący papier tej strony. Zwróć JSON zgodnie ze schematem.'],
                             [
                                 'inline_data' => [
                                     'mime_type' => $mimeType,
@@ -94,7 +94,7 @@ PROMPT;
                 'generationConfig' => [
                     'temperature' => 0.2,
                     'maxOutputTokens' => 65536,
-                    'mediaResolution' => 'MEDIA_RESOLUTION_LOW',
+                    'mediaResolution' => 'MEDIA_RESOLUTION_MEDIUM',
                     'responseMimeType' => 'application/json',
                     'responseSchema' => [
                         'type' => 'OBJECT',
@@ -144,21 +144,28 @@ PROMPT;
                                             'nullable' => true,
                                             'description' => 'Numer strony lub null; usunięty z corrected_text gdy wykryty.',
                                         ],
-                                        'corners' => [
+                                        'bounds' => [
                                             'type' => 'OBJECT',
-                                            'description' => 'Rogi papieru tej strony; x/y w PROCENTACH 0–100 względem całego obrazu.',
+                                            'description' => 'Prostokąt papieru strony w procentach 0–100 całego zdjęcia (left < right, top < bottom).',
                                             'properties' => [
-                                                'top_left' => self::cornerPointSchema('Lewy górny róg strony (procenty 0–100).'),
-                                                'top_right' => self::cornerPointSchema('Prawy górny róg strony (procenty 0–100).'),
-                                                'bottom_right' => self::cornerPointSchema('Prawy dolny róg strony (procenty 0–100).'),
-                                                'bottom_left' => self::cornerPointSchema('Lewy dolny róg strony (procenty 0–100).'),
+                                                'left' => [
+                                                    'type' => 'NUMBER',
+                                                    'description' => 'Lewa krawędź kartki, % szerokości obrazu (0–100).',
+                                                ],
+                                                'top' => [
+                                                    'type' => 'NUMBER',
+                                                    'description' => 'Górna krawędź kartki, % wysokości obrazu (0–100).',
+                                                ],
+                                                'right' => [
+                                                    'type' => 'NUMBER',
+                                                    'description' => 'Prawa krawędź kartki, % szerokości obrazu (0–100).',
+                                                ],
+                                                'bottom' => [
+                                                    'type' => 'NUMBER',
+                                                    'description' => 'Dolna krawędź kartki, % wysokości obrazu (0–100).',
+                                                ],
                                             ],
-                                            'required' => [
-                                                'top_left',
-                                                'top_right',
-                                                'bottom_right',
-                                                'bottom_left',
-                                            ],
+                                            'required' => ['left', 'top', 'right', 'bottom'],
                                         ],
                                     ],
                                     'required' => [
@@ -171,7 +178,7 @@ PROMPT;
                                         'coherence',
                                         'page_number_detected',
                                         'page_number',
-                                        'corners',
+                                        'bounds',
                                     ],
                                 ],
                             ],
@@ -319,9 +326,17 @@ PROMPT;
                 'ocr_quality' => $quality,
                 'coherence' => $coherence,
             ];
-            $corners = $this->parseCorners($page['corners'] ?? null);
-            if ($corners !== null) {
-                $item['corners'] = $corners;
+            // Preferuj prosty bbox %; corners (stary format) jako fallback.
+            $bounds = $this->parseBoundsPercent($page['bounds'] ?? null);
+            if ($bounds !== null) {
+                $item['bounds'] = $bounds;
+                $item['corners'] = $this->boundsToCorners01($bounds);
+            } else {
+                $corners = $this->parseCorners($page['corners'] ?? null);
+                if ($corners !== null) {
+                    $item['corners'] = $corners;
+                    $item['bounds'] = $this->corners01ToBoundsPercent($corners);
+                }
             }
             $pageItems[] = $item;
 
@@ -435,29 +450,108 @@ PROMPT;
     }
 
     /**
-     * @return array{type: string, description: string, properties: array<string, mixed>, required: list<string>}
+     * @return array{left: float, top: float, right: float, bottom: float}|null  procenty 0–100
      */
-    private static function cornerPointSchema(string $description): array
+    private function parseBoundsPercent(mixed $raw): ?array
     {
+        if (! is_array($raw)) {
+            return null;
+        }
+        foreach (['left', 'top', 'right', 'bottom'] as $key) {
+            if (! is_numeric($raw[$key] ?? null)) {
+                return null;
+            }
+        }
+
+        $left = (float) $raw['left'];
+        $top = (float) $raw['top'];
+        $right = (float) $raw['right'];
+        $bottom = (float) $raw['bottom'];
+
+        // Jeśli model podał 0–1 zamiast %, przeskaluj.
+        $max = max($left, $top, $right, $bottom);
+        if ($max <= 1.0001) {
+            $left *= 100;
+            $top *= 100;
+            $right *= 100;
+            $bottom *= 100;
+        }
+
+        $left = $this->clampPercent($left);
+        $top = $this->clampPercent($top);
+        $right = $this->clampPercent($right);
+        $bottom = $this->clampPercent($bottom);
+
+        if ($right - $left < 3 || $bottom - $top < 3) {
+            return null;
+        }
+
         return [
-            'type' => 'OBJECT',
-            'description' => $description,
-            'properties' => [
-                'x' => [
-                    'type' => 'NUMBER',
-                    'description' => 'Współrzędna X w procentach 0–100 (0 = lewa krawędź, 100 = prawa).',
-                ],
-                'y' => [
-                    'type' => 'NUMBER',
-                    'description' => 'Współrzędna Y w procentach 0–100 (0 = góra, 100 = dół).',
-                ],
-            ],
-            'required' => ['x', 'y'],
+            'left' => round($left, 2),
+            'top' => round($top, 2),
+            'right' => round($right, 2),
+            'bottom' => round($bottom, 2),
         ];
     }
 
     /**
-     * Zwraca corners w skali 0–1 (wewnętrznie). Wejście: 0–1 albo 0–100 (%).
+     * @param  array{left: float, top: float, right: float, bottom: float}  $bounds
+     * @return array{
+     *   top_left: array{x: float, y: float},
+     *   top_right: array{x: float, y: float},
+     *   bottom_right: array{x: float, y: float},
+     *   bottom_left: array{x: float, y: float}
+     * }
+     */
+    private function boundsToCorners01(array $bounds): array
+    {
+        $l = $bounds['left'] / 100;
+        $t = $bounds['top'] / 100;
+        $r = $bounds['right'] / 100;
+        $b = $bounds['bottom'] / 100;
+
+        return [
+            'top_left' => ['x' => $this->clampUnit($l), 'y' => $this->clampUnit($t)],
+            'top_right' => ['x' => $this->clampUnit($r), 'y' => $this->clampUnit($t)],
+            'bottom_right' => ['x' => $this->clampUnit($r), 'y' => $this->clampUnit($b)],
+            'bottom_left' => ['x' => $this->clampUnit($l), 'y' => $this->clampUnit($b)],
+        ];
+    }
+
+    /**
+     * @param  array{
+     *   top_left: array{x: float, y: float},
+     *   top_right: array{x: float, y: float},
+     *   bottom_right: array{x: float, y: float},
+     *   bottom_left: array{x: float, y: float}
+     * }  $corners
+     * @return array{left: float, top: float, right: float, bottom: float}
+     */
+    private function corners01ToBoundsPercent(array $corners): array
+    {
+        $xs = [
+            $corners['top_left']['x'],
+            $corners['top_right']['x'],
+            $corners['bottom_right']['x'],
+            $corners['bottom_left']['x'],
+        ];
+        $ys = [
+            $corners['top_left']['y'],
+            $corners['top_right']['y'],
+            $corners['bottom_right']['y'],
+            $corners['bottom_left']['y'],
+        ];
+
+        return [
+            'left' => round(min($xs) * 100, 2),
+            'top' => round(min($ys) * 100, 2),
+            'right' => round(max($xs) * 100, 2),
+            'bottom' => round(max($ys) * 100, 2),
+        ];
+    }
+
+    /**
+     * Zwraca corners w skali 0–1. Wejście: 0–1 albo 0–100 (%).
      *
      * @return array{
      *   top_left: array{x: float, y: float},
@@ -489,7 +583,6 @@ PROMPT;
         foreach ($rawPoints as $p) {
             $max = max($max, $p['x'], $p['y']);
         }
-        // Gemini często zwraca procenty 0–100; >1 → dziel przez 100.
         $scale = $max > 1.0001 ? 100.0 : 1.0;
 
         $out = [];
@@ -500,7 +593,25 @@ PROMPT;
             ];
         }
 
+        $xs = array_column($out, 'x');
+        $ys = array_column($out, 'y');
+        if (max($xs) - min($xs) < 0.03 || max($ys) - min($ys) < 0.03) {
+            return null;
+        }
+
         return $out;
+    }
+
+    private function clampPercent(float $n): float
+    {
+        if ($n < 0) {
+            return 0.0;
+        }
+        if ($n > 100) {
+            return 100.0;
+        }
+
+        return $n;
     }
 
     private function clampUnit(float $n): float

@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { isApiConfigured } from '@/src/ai/config';
-import { formatCornerPercent } from '@/src/ai/corners';
+import { formatBoundsPercent, formatCornerPercent } from '@/src/ai/corners';
 import { estimateGeminiRequestCost, formatUsd } from '@/src/ai/pricing';
 import {
   cancelAiForPage,
@@ -314,6 +314,7 @@ export default function PageDetailScreen() {
                 ocrQuality: prev?.ocrQuality ?? page.aiAnalysis?.ocrQuality ?? 0,
                 coherence: prev?.coherence ?? page.aiAnalysis?.coherence ?? 0,
                 ...(prev?.corners ? { corners: prev.corners } : {}),
+                ...(prev?.bounds ? { bounds: prev.bounds } : {}),
               };
             })
           : undefined;
@@ -670,19 +671,27 @@ export default function PageDetailScreen() {
               ) : (
                 page.aiAnalysis.pages.map((aiPage, index) => {
                   const c = aiPage.corners;
+                  const b = aiPage.bounds;
                   return (
                     <View key={`corners-dbg-${index}`} style={styles.cornersDebugCard}>
                       <Text style={styles.cornersDebugLabel}>
                         Strona {index + 1}
                         {aiPage.pageNumber ? ` · nr ${aiPage.pageNumber}` : ''}
                       </Text>
+                      {b ? (
+                        <Text style={styles.cornersDebugMono} selectable>
+                          {`bounds: ${formatBoundsPercent(b)}`}
+                        </Text>
+                      ) : (
+                        <Text style={styles.cornersDebugEmpty}>brak bounds</Text>
+                      )}
                       {c ? (
                         <Text style={styles.cornersDebugMono} selectable>
                           {`TL ${formatCornerPercent(c.topLeft)}\nTR ${formatCornerPercent(c.topRight)}\nBR ${formatCornerPercent(c.bottomRight)}\nBL ${formatCornerPercent(c.bottomLeft)}`}
                         </Text>
                       ) : (
                         <Text style={styles.cornersDebugEmpty}>
-                          brak pola corners w danych tej strony
+                          brak corners — ponów Analizę AI (nowy schemat bounds)
                         </Text>
                       )}
                     </View>

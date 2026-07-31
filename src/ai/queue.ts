@@ -7,7 +7,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { useSyncExternalStore } from 'react';
 
 import { AI_POLL_INTERVAL_MS, isApiConfigured } from '@/src/ai/config';
-import { parseAiPageCorners } from '@/src/ai/corners';
+import { resolvePageGeometry } from '@/src/ai/corners';
 import { canRunAiRewrite, needsAiRewrite } from '@/src/ai/displayText';
 import * as api from '@/src/api/endpoints';
 import { ApiError } from '@/src/api/types';
@@ -268,7 +268,10 @@ async function applyJobResults(
               .map((p) => {
                 const text = typeof p.text === 'string' ? p.text.trim() : '';
                 if (!text) return null;
-                const corners = parseAiPageCorners(p.corners);
+                const geometry = resolvePageGeometry({
+                  bounds: p.bounds,
+                  corners: p.corners,
+                });
                 return {
                   text,
                   title: p.title ?? null,
@@ -276,7 +279,9 @@ async function applyJobResults(
                   pageNumber: p.page_number ?? null,
                   ocrQuality: typeof p.ocr_quality === 'number' ? p.ocr_quality : 0,
                   coherence: typeof p.coherence === 'number' ? p.coherence : 0,
-                  ...(corners ? { corners } : {}),
+                  ...(geometry
+                    ? { corners: geometry.corners, bounds: geometry.bounds }
+                    : {}),
                 };
               })
               .filter((p): p is NonNullable<typeof p> => p != null)
