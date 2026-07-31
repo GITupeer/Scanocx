@@ -1,6 +1,13 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   Alert,
   Dimensions,
@@ -35,7 +42,8 @@ import {
   useAiQueue,
 } from '@/src/ai/queue';
 import { useAuth } from '@/src/auth/AuthProvider';
-import type { AiAnalysis, Book, BookPage } from '@/src/domain/types';
+import type { AiAnalysis, AiPageText, Book, BookPage } from '@/src/domain/types';
+import { getImageSize } from '@/src/images/ensurePortrait';
 import { getLibraryBook } from '@/src/library/books';
 import {
   cancelOcrForBook,
@@ -79,6 +87,7 @@ import {
   Icon,
   Loader,
   OcrStatusBadge,
+  PageCornersOverlay,
   PageImagePlaceholder,
   Row,
   ScanQueueCard,
@@ -99,7 +108,6 @@ import { pages as pagesLabel } from '@/src/utils/format';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const CARD_WIDTH = SCREEN_WIDTH - space.lg * 2;
-const IMAGE_HEIGHT = Math.round(CARD_WIDTH * (4 / 3));
 const DOCK_HEIGHT = 64;
 const DOCK_FAB_SIZE = 48;
 const DOCK_BOTTOM_GAP = space.sm;
@@ -291,7 +299,7 @@ export default function BookDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [showOcr, setShowOcr] = useState(false);
   const [mainTab, setMainTab] = useState<MainTab>('pages');
-  const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [viewMode, setViewMode] = useState<ViewMode>('cards');
   const [pageFilter, setPageFilter] = useState<PageFilter>('all');
   const [pageSort, setPageSort] = useState<PageSort>('system');
   const [pageSortDir, setPageSortDir] = useState<PageSortDir>('desc');
@@ -815,57 +823,58 @@ export default function BookDetailScreen() {
             ) : null}
           </View>
 
-          <View style={styles.pageBadges}>
-            <OcrStatusBadge status={item.ocrStatus} />
-            <AiStatusBadge status={item.aiStatus} />
-          </View>
           <Icon name="more" size={18} color={colors.faint} />
         </Pressable>
 
         <OcrQualityChips page={item} />
 
-        <View style={styles.imageFrame}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={() => openPageMenu(item)}
-            disabled={showOcr || actionBusy}>
-            {item.imageUri ? (
-              <Image source={{ uri: item.imageUri }} style={styles.image} resizeMode="contain" />
-            ) : (
-              <PageImagePlaceholder />
-            )}
-          </Pressable>
-
-          {getAiDetectedPageCount(item) > 1 ? (
-            <View style={styles.aiPagesBadge} pointerEvents="none">
-              <Icon name="bookOpen" size={12} color={colors.white} />
-              <Text style={styles.aiPagesBadgeText}>{getAiDetectedPageCount(item)}</Text>
-            </View>
-          ) : null}
-
-          {showOcr ? (
-            <View style={styles.ocrOverlay}>
-              <View style={styles.ocrChip}>
-                <Icon name="ai" size={12} color={colors.white} />
-                <Text style={styles.ocrChipText}>
-                  {item.aiStatus === 'error'
-                    ? 'Błąd AI'
-                    : item.aiStatus === 'done'
-                      ? 'Tekst AI'
-                      : 'Tekst ze skanu'}
-                </Text>
+        <AdaptiveCardImage
+          uri={item.imageUri}
+          aiOnly={!!item.aiOnly}
+          onPress={() => openPageMenu(item)}
+          disabled={showOcr || actionBusy}
+          cornerPages={item.aiAnalysis?.pages}
+          badge={
+            <>
+              {getAiDetectedPageCount(item) > 1 ? (
+                <View style={styles.cardImageBadgeLeft} pointerEvents="none">
+                  <View style={styles.aiPagesBadge}>
+                    <Icon name="bookOpen" size={12} color={colors.white} />
+                    <Text style={styles.aiPagesBadgeText}>{getAiDetectedPageCount(item)}</Text>
+                  </View>
+                </View>
+              ) : null}
+              <View style={styles.cardImageBadges} pointerEvents="none">
+                <OcrStatusBadge status={item.ocrStatus} />
+                <AiStatusBadge status={item.aiStatus} />
               </View>
-              <ScrollView
-                style={styles.ocrScroll}
-                contentContainerStyle={styles.ocrScrollContent}
-                showsVerticalScrollIndicator
-                nestedScrollEnabled
-                bounces={false}>
-                <Text style={styles.ocrText}>{ocrOverlayCopy(item)}</Text>
-              </ScrollView>
-            </View>
-          ) : null}
-        </View>
+            </>
+          }
+          overlay={
+            showOcr ? (
+              <View style={styles.ocrOverlay}>
+                <View style={styles.ocrChip}>
+                  <Icon name="ai" size={12} color={colors.white} />
+                  <Text style={styles.ocrChipText}>
+                    {item.aiStatus === 'error'
+                      ? 'Błąd AI'
+                      : item.aiStatus === 'done'
+                        ? 'Tekst AI'
+                        : 'Tekst ze skanu'}
+                  </Text>
+                </View>
+                <ScrollView
+                  style={styles.ocrScroll}
+                  contentContainerStyle={styles.ocrScrollContent}
+                  showsVerticalScrollIndicator
+                  nestedScrollEnabled
+                  bounces={false}>
+                  <Text style={styles.ocrText}>{ocrOverlayCopy(item)}</Text>
+                </ScrollView>
+              </View>
+            ) : null
+          }
+        />
       </View>
     ),
     [actionBusy, openPageMenu, showOcr]
@@ -1607,6 +1616,64 @@ export default function BookDetailScreen() {
   );
 }
 
+/** Ramka zdjęcia w widoku kart — wysokość z proporcji pliku, bez stałego aspectu. */
+function AdaptiveCardImage({
+  uri,
+  aiOnly,
+  onPress,
+  disabled,
+  badge,
+  overlay,
+  cornerPages,
+}: {
+  uri: string | null;
+  aiOnly?: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+  badge?: ReactNode;
+  overlay?: ReactNode;
+  cornerPages?: AiPageText[];
+}) {
+  const [aspectRatio, setAspectRatio] = useState(aiOnly ? 4 / 3 : 3 / 4);
+
+  useEffect(() => {
+    if (!uri?.trim()) {
+      setAspectRatio(aiOnly ? 4 / 3 : 3 / 4);
+      return;
+    }
+    let cancelled = false;
+    void getImageSize(uri)
+      .then(({ width, height }) => {
+        if (cancelled || width <= 0 || height <= 0) return;
+        setAspectRatio(width / height);
+      })
+      .catch(() => {
+        if (!cancelled) setAspectRatio(aiOnly ? 4 / 3 : 3 / 4);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [aiOnly, uri]);
+
+  return (
+    <View style={[styles.imageFrame, { aspectRatio }]}>
+      <Pressable
+        style={StyleSheet.absoluteFill}
+        onPress={onPress}
+        disabled={disabled}>
+        {uri ? (
+          <Image source={{ uri }} style={styles.image} resizeMode="cover" />
+        ) : (
+          <PageImagePlaceholder />
+        )}
+      </Pressable>
+      <PageCornersOverlay pages={cornerPages} strokeWidth={2} />
+      {badge}
+      {overlay}
+    </View>
+  );
+}
+
 function formatScore(value: number): string {
   return value.toFixed(2);
 }
@@ -1954,14 +2021,26 @@ const styles = StyleSheet.create({
     color: colors.muted,
   },
   imageFrame: {
-    width: CARD_WIDTH,
-    height: IMAGE_HEIGHT,
+    width: '100%',
     backgroundColor: colors.surfaceSunken,
   },
-  aiPagesBadge: {
+  cardImageBadgeLeft: {
+    position: 'absolute',
+    top: space.sm,
+    left: space.sm,
+  },
+  cardImageBadges: {
     position: 'absolute',
     top: space.sm,
     right: space.sm,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '72%',
+  },
+  aiPagesBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,

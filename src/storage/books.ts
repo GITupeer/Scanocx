@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 
+import { parseAiPageCorners } from '@/src/ai/corners';
 import { resolvePageOcrStatus } from '@/src/ai/displayText';
 import type {
   AiAnalysis,
@@ -99,6 +100,7 @@ function normalizeAiPageText(raw: unknown): AiPageText | null {
   const item = raw as Record<string, unknown>;
   const text = typeof item.text === 'string' ? item.text.trim() : '';
   if (!text) return null;
+  const corners = parseAiPageCorners(item.corners);
   return {
     text,
     title: typeof item.title === 'string' && item.title.trim() ? item.title.trim() : null,
@@ -118,6 +120,7 @@ function normalizeAiPageText(raw: unknown): AiPageText | null {
           : 0
     ),
     coherence: clampScore(typeof item.coherence === 'number' ? item.coherence : 0),
+    ...(corners ? { corners } : {}),
   };
 }
 

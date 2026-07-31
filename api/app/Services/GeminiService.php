@@ -32,6 +32,7 @@ ANALIZA JSON (dla każdej pozycji w pages):
 - page_number: numer z marginesu lub null; jeśli wykryty — USUŃ go z corrected_text.
 - ocr_quality (0.00–1.00): czytelność SKANU tej strony. ≥0.85 ostry; 0.50–0.84 drobne problemy; <0.50 gdy jakakolwiek istotna część nieczytelna (im gorzej, tym niżej; zgadywanie → <0.50).
 - coherence (0.00–1.00): spójność corrected_text po korekcie.
+- corners: cztery rogi papieru tej strony na zdjęciu (top_left, top_right, bottom_right, bottom_left). Współrzędne znormalizowane 0.0–1.0 względem całego obrazu (x: lewo→prawo, y: góra→dół). Dla rozkładówki każda strona ma własny czworokąt; dla jednej strony — rogi tej kartki.
 PROMPT;
 
     /**
@@ -80,7 +81,7 @@ PROMPT;
                     [
                         'role' => 'user',
                         'parts' => [
-                            ['text' => 'Odczytaj i popraw tekst ze zdjęcia książki. Jeśli widać wiele stron, zwróć je wszystkie w pages (kolejność lewa→prawa). Zwróć JSON zgodnie ze schematem.'],
+                            ['text' => 'Odczytaj i popraw tekst ze zdjęcia książki. Jeśli widać wiele stron, zwróć je wszystkie w pages (kolejność lewa→prawa). Dla każdej strony podaj corners (rogi papieru, współrzędne 0–1). Zwróć JSON zgodnie ze schematem.'],
                             [
                                 'inline_data' => [
                                     'mime_type' => $mimeType,
@@ -143,6 +144,22 @@ PROMPT;
                                             'nullable' => true,
                                             'description' => 'Numer strony lub null; usunięty z corrected_text gdy wykryty.',
                                         ],
+                                        'corners' => [
+                                            'type' => 'OBJECT',
+                                            'description' => 'Rogi papieru tej strony na zdjęciu; x/y w zakresie 0–1 względem całego obrazu.',
+                                            'properties' => [
+                                                'top_left' => self::cornerPointSchema('Lewy górny róg strony.'),
+                                                'top_right' => self::cornerPointSchema('Prawy górny róg strony.'),
+                                                'bottom_right' => self::cornerPointSchema('Prawy dolny róg strony.'),
+                                                'bottom_left' => self::cornerPointSchema('Lewy dolny róg strony.'),
+                                            ],
+                                            'required' => [
+                                                'top_left',
+                                                'top_right',
+                                                'bottom_right',
+                                                'bottom_left',
+                                            ],
+                                        ],
                                     ],
                                     'required' => [
                                         'corrected_text',
@@ -154,6 +171,7 @@ PROMPT;
                                         'coherence',
                                         'page_number_detected',
                                         'page_number',
+                                        'corners',
                                     ],
                                 ],
                             ],
@@ -293,7 +311,7 @@ PROMPT;
             $quality = $this->clampScore($page['ocr_quality'] ?? 0);
             $coherence = $this->clampScore($page['coherence'] ?? 0);
 
-            $pageItems[] = [
+            $item = [
                 'text' => $text,
                 'title' => $itemTitle,
                 'subtitle' => $itemSubtitle,
@@ -301,6 +319,11 @@ PROMPT;
                 'ocr_quality' => $quality,
                 'coherence' => $coherence,
             ];
+            $corners = $this->parseCorners($page['corners'] ?? null);
+            if ($corners !== null) {
+                $item['corners'] = $corners;
+            }
+            $pageItems[] = $item;
 
             if ($title === null && $itemTitle !== null) {
                 $title = $itemTitle;
@@ -409,6 +432,85 @@ PROMPT;
         }
 
         return [$out, 'image/jpeg'];
+    }
+
+    /**
+     * @return array{type: string, description: string, properties: array<string, mixed>, required: list<string>}
+     */
+    private static function cornerPointSchema(string $description): array
+    {
+        return [
+            'type' => 'OBJECT',
+            'description' => $description,
+            'properties' => [
+                'x' => [
+                    'type' => 'NUMBER',
+                    'description' => 'Współrzędna X 0.0–1.0 (0 = lewa krawędź obrazu).',
+                ],
+                'y' => [
+                    'type' => 'NUMBER',
+                    'description' => 'Współrzędna Y 0.0–1.0 (0 = górna krawędź obrazu).',
+                ],
+            ],
+            'required' => ['x', 'y'],
+        ];
+    }
+
+    /**
+     * @return array{
+     *   top_left: array{x: float, y: float},
+     *   top_right: array{x: float, y: float},
+     *   bottom_right: array{x: float, y: float},
+     *   bottom_left: array{x: float, y: float}
+     * }|null
+     */
+    private function parseCorners(mixed $raw): ?array
+    {
+        if (! is_array($raw)) {
+            return null;
+        }
+
+        $keys = ['top_left', 'top_right', 'bottom_right', 'bottom_left'];
+        $out = [];
+        foreach ($keys as $key) {
+            $point = $this->parseCornerPoint($raw[$key] ?? null);
+            if ($point === null) {
+                return null;
+            }
+            $out[$key] = $point;
+        }
+
+        return $out;
+    }
+
+    /**
+     * @return array{x: float, y: float}|null
+     */
+    private function parseCornerPoint(mixed $raw): ?array
+    {
+        if (! is_array($raw)) {
+            return null;
+        }
+        if (! is_numeric($raw['x'] ?? null) || ! is_numeric($raw['y'] ?? null)) {
+            return null;
+        }
+
+        return [
+            'x' => $this->clampUnit((float) $raw['x']),
+            'y' => $this->clampUnit((float) $raw['y']),
+        ];
+    }
+
+    private function clampUnit(float $n): float
+    {
+        if ($n < 0) {
+            $n = 0.0;
+        }
+        if ($n > 1) {
+            $n = 1.0;
+        }
+
+        return round($n, 4);
     }
 
     private function nullableString(mixed $value): ?string

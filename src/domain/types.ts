@@ -17,6 +17,20 @@ export type OcrQuality = {
   confidence: OcrConfidenceQuality;
 };
 
+/** Punkt znormalizowany 0–1 względem obrazu (lewy górny = 0,0). */
+export type AiCornerPoint = {
+  x: number;
+  y: number;
+};
+
+/** Czworokąt papieru strony wykryty przez AI. */
+export type AiPageCorners = {
+  topLeft: AiCornerPoint;
+  topRight: AiCornerPoint;
+  bottomRight: AiCornerPoint;
+  bottomLeft: AiCornerPoint;
+};
+
 /** Jedna strona książki wykryta na zdjęciu przez AI (rozkładówka = wiele). */
 export type AiPageText = {
   text: string;
@@ -25,6 +39,8 @@ export type AiPageText = {
   pageNumber: string | null;
   ocrQuality: number;
   coherence: number;
+  /** Rogi papieru na zdjęciu; brak gdy starszy wynik AI. */
+  corners?: AiPageCorners | null;
 };
 
 /** Metadane z korekty Gemini (tytuł, jakość, numer strony). */

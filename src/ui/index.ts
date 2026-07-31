@@ -3,6 +3,7 @@ export { AuroraBackdrop } from './Backdrop';
 export { Badge, OcrStatusBadge, AiStatusBadge, type BadgeTone } from './Badge';
 export { BookCover } from './BookCover';
 export { PageImagePlaceholder } from './PageImagePlaceholder';
+export { PageCornersOverlay } from './PageCornersOverlay';
 export { BottomNav, useBottomNavInset, type NavTab } from './BottomNav';
 export { Button, IconButton, type ButtonSize, type ButtonVariant } from './Button';
 export { Card, Divider, Row, SectionHeader } from './Card';

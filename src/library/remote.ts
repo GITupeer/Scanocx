@@ -1,6 +1,7 @@
 import type { UpsertBookPageInput } from '@/src/api/endpoints';
 import * as api from '@/src/api/endpoints';
 import { getAuthToken } from '@/src/api/token';
+import { aiPageCornersToRemote } from '@/src/ai/corners';
 import type { AiAnalysis, Book, BookPage } from '@/src/domain/types';
 
 function aiMetaToRemote(analysis: AiAnalysis | null): Record<string, unknown> | null {
@@ -23,6 +24,9 @@ function aiMetaToRemote(analysis: AiAnalysis | null): Record<string, unknown> | 
             page_number: p.pageNumber,
             ocr_quality: p.ocrQuality,
             coherence: p.coherence,
+            ...(aiPageCornersToRemote(p.corners)
+              ? { corners: aiPageCornersToRemote(p.corners) }
+              : {}),
           })),
         }
       : {}),

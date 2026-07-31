@@ -1,5 +1,6 @@
 import * as api from '@/src/api/endpoints';
 import type { ApiBook, ApiBookPage, ApiBookSummary } from '@/src/api/types';
+import { parseAiPageCorners } from '@/src/ai/corners';
 import { resolvePageOcrStatus } from '@/src/ai/displayText';
 import type {
   AiAnalysis,
@@ -35,6 +36,7 @@ function mapApiAiPage(raw: unknown): AiPageText | null {
   if (!text) return null;
   const ocrRaw = item.ocr_quality ?? item.ocrQuality;
   const pageRaw = item.page_number ?? item.pageNumber;
+  const corners = parseAiPageCorners(item.corners);
   return {
     text,
     title: typeof item.title === 'string' && item.title.trim() ? item.title.trim() : null,
@@ -43,6 +45,7 @@ function mapApiAiPage(raw: unknown): AiPageText | null {
     pageNumber: typeof pageRaw === 'string' && pageRaw.trim() ? pageRaw.trim() : null,
     ocrQuality: typeof ocrRaw === 'number' ? clampScore(ocrRaw) : 0,
     coherence: typeof item.coherence === 'number' ? clampScore(item.coherence) : 0,
+    ...(corners ? { corners } : {}),
   };
 }
 

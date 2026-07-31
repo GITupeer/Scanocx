@@ -39,6 +39,7 @@ import {
   IconButton,
   Loader,
   OcrStatusBadge,
+  PageCornersOverlay,
   PageImagePlaceholder,
   Row,
   ScanQueueCard,
@@ -310,6 +311,7 @@ export default function PageDetailScreen() {
                 pageNumber: num,
                 ocrQuality: prev?.ocrQuality ?? page.aiAnalysis?.ocrQuality ?? 0,
                 coherence: prev?.coherence ?? page.aiAnalysis?.coherence ?? 0,
+                ...(prev?.corners ? { corners: prev.corners } : {}),
               };
             })
           : undefined;
@@ -580,18 +582,20 @@ export default function PageDetailScreen() {
             <View
               style={[
                 styles.imageCard,
-                page.aiOnly ? styles.imageCardLandscape : null,
+                { aspectRatio: imageAspectRatio ?? (page.aiOnly ? 4 / 3 : 3 / 4) },
               ]}>
               {previewUri ? (
                 <Image
                   source={{ uri: previewUri }}
                   style={styles.image}
-                  resizeMode="contain"
+                  resizeMode="cover"
                   key={`${previewUri}-${showingOriginal ? 'orig' : 'crop'}`}
                 />
               ) : (
                 <PageImagePlaceholder style={styles.image} />
               )}
+
+              <PageCornersOverlay pages={page.aiAnalysis?.pages} />
 
               <View style={styles.imageBadge}>
                 {aiPageTexts.length > 1 ? (
@@ -1095,16 +1099,12 @@ const styles = StyleSheet.create({
   },
   imageCard: {
     width: '100%',
-    aspectRatio: 3 / 4,
     borderRadius: radius.xl,
     backgroundColor: colors.surfaceSunken,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: colors.line,
     ...shadow.soft,
-  },
-  imageCardLandscape: {
-    aspectRatio: 4 / 3,
   },
   multiPageBadge: {
     flexDirection: 'row',
