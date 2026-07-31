@@ -62,14 +62,19 @@ class ProcessPageAiJob implements ShouldQueue
                 default => throw new \RuntimeException("Nieznany AI_PROVIDER: {$provider} (dozwolone: gemini, deepseek)."),
             };
 
-            DB::transaction(function () use ($aiJob, $page, $result, $quota, $provider) {
-                $page->ai_text = $result['text'];
+            $resultText = trim((string) ($result['text'] ?? ''));
+            if ($resultText === '') {
+                throw new \RuntimeException('Model AI zwrócił pusty tekst strony.');
+            }
+
+            DB::transaction(function () use ($aiJob, $page, $result, $resultText, $quota, $provider) {
+                $page->ai_text = $resultText;
                 $page->ai_status = 'done';
 
                 $pagesMeta = $result['pages'] ?? null;
                 if (! is_array($pagesMeta) || $pagesMeta === []) {
                     $pagesMeta = [[
-                        'text' => $result['text'],
+                        'text' => $resultText,
                         'title' => $result['title'],
                         'subtitle' => $result['subtitle'],
                         'page_number' => $result['page_number'],

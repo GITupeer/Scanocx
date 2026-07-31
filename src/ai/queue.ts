@@ -282,6 +282,26 @@ async function applyJobResults(
       const textFromPages =
         pages && pages.length > 0 ? pages.map((p) => p.text).join('\n\n\n') : '';
       const aiText = (job.ai_text ?? '').trim() || textFromPages;
+
+      // Job „done” bez treści = wynik został zmazany (stary wyścig sync) albo pusty model.
+      // Nie zapisuj done bez tekstu — to blokuje ponowną korektę i zaśmieca bazę.
+      if (!aiText) {
+        await withBookMetaLock(() =>
+          updatePageAi(
+            bookId,
+            job.page_local_id,
+            {
+              aiText: '',
+              aiStatus: 'idle',
+              aiError: null,
+              aiAnalysis: null,
+            },
+            { syncRemote: true }
+          )
+        );
+        continue;
+      }
+
       const analysis =
         meta != null
           ? {
@@ -431,15 +451,24 @@ async function settleRemainingPending(
   if (stillPending.length === 0) return;
 
   // Joby z terminalnych batchy powinny już być zastosowane w applyJobResults.
-  // Jeśli coś zostało (np. pusty ai_text w odpowiedzi) — nie trzymaj pending w nieskończoność.
+  // Bez tekstu → idle (do ponownej korekty), nie fałszywy done.
   await withBookMetaLock(() =>
     updatePagesAi(
       bookId,
-      stillPending.map((page) => ({
-        pageId: page.id,
-        aiStatus: (page.aiText.trim() ? 'done' : 'idle') as 'done' | 'idle',
-        aiError: null,
-      })),
+      stillPending.map((page) =>
+        page.aiText.trim()
+          ? {
+              pageId: page.id,
+              aiStatus: 'done' as const,
+              aiError: null,
+            }
+          : {
+              pageId: page.id,
+              aiStatus: 'idle' as const,
+              aiError: null,
+              aiAnalysis: null,
+            }
+      ),
       { syncRemote: false }
     )
   );
