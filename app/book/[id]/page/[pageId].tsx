@@ -274,7 +274,9 @@ export default function PageDetailScreen() {
   }, [imagePreview, page?.imageUri, page?.originalImageUri]);
 
   const analyzingThisPage =
-    ocrQueue.currentPageId === pageId || aiQueue.currentPageIds.includes(pageId);
+    ocrQueue.currentPageId === pageId ||
+    ((aiQueue.phase !== 'preparing' && aiQueue.phase !== 'sending') &&
+      aiQueue.currentPageIds.includes(pageId));
   const wasAnalyzedRef = useRef(false);
   useEffect(() => {
     if (analyzingThisPage) {
@@ -604,7 +606,13 @@ export default function PageDetailScreen() {
                 <OcrStatusBadge status={runningOcr || rotating ? 'pending' : page.ocrStatus} />
                 <AiStatusBadge
                   status={
-                    runningAi || aiQueue.currentPageIds.includes(pageId) ? 'pending' : page.aiStatus
+                    aiQueue.phase === 'preparing' || aiQueue.phase === 'sending'
+                      ? page.aiStatus === 'pending'
+                        ? 'idle'
+                        : page.aiStatus
+                      : runningAi || aiQueue.currentPageIds.includes(pageId)
+                        ? 'pending'
+                        : page.aiStatus
                   }
                 />
               </View>

@@ -145,6 +145,18 @@ class BookController extends Controller
         return response()->json(['ok' => true]);
     }
 
+    /** Tworzy (lub zwraca istniejący) publiczny link do pełnego tekstu książki. */
+    public function share(Request $request, string $localId): JsonResponse
+    {
+        $book = $this->findBookOrFail($request, $localId);
+        $token = $book->ensureShareToken();
+
+        return response()->json([
+            'share_token' => $token,
+            'url' => $book->shareUrl(),
+        ]);
+    }
+
     public function storePage(Request $request, string $localId, PhotoQuotaService $photoQuota): JsonResponse
     {
         $book = $this->findBookOrFail($request, $localId);

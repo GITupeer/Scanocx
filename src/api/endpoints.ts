@@ -148,6 +148,16 @@ export function deleteBookRemote(localId: string): Promise<{ ok: boolean }> {
   });
 }
 
+/** Tworzy (lub zwraca) publiczny URL z pełnym tekstem książki. */
+export function createBookShareLink(
+  localId: string
+): Promise<{ share_token: string; url: string }> {
+  return apiRequest<{ share_token: string; url: string }>(
+    `/api/books/${encodeURIComponent(localId)}/share`,
+    { method: 'POST' }
+  );
+}
+
 export function upsertPage(
   bookLocalId: string,
   input: UpsertBookPageInput

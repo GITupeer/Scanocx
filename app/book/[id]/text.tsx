@@ -1,13 +1,17 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
+import * as Clipboard from "expo-clipboard";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, Share, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { isApiConfigured } from "@/src/ai/config";
 import { getDisplayText } from "@/src/ai/displayText";
+import { createBookShareLink } from "@/src/api/endpoints";
 import { useAuth } from "@/src/auth/AuthProvider";
 import type { Book } from "@/src/domain/types";
 import { buildBookPlainText } from "@/src/export";
 import { getLibraryBook } from "@/src/library/books";
+import { pushBookToRemote } from "@/src/library/remote";
 import {
   AiQueueCard,
   AppBar,
@@ -36,6 +40,7 @@ export default function BookTextScreen() {
   const { ready, isLoggedIn } = useAuth();
   const [book, setBook] = useState<Book | null>(null);
   const [loading, setLoading] = useState(true);
+  const [linkBusy, setLinkBusy] = useState(false);
 
   useEffect(() => {
     if (!ready) return;
@@ -76,6 +81,41 @@ export default function BookTextScreen() {
     }
   };
 
+  const onShareLink = async () => {
+    if (!book || linkBusy) return;
+    if (!isApiConfigured()) {
+      Alert.alert("Link do tekstu", "Brak konfiguracji API (EXPO_PUBLIC_API_BASE_URL).");
+      return;
+    }
+    if (book.pages.length === 0) {
+      Alert.alert("Link do tekstu", "Dodaj przynajmniej jedną stronę.");
+      return;
+    }
+
+    setLinkBusy(true);
+    try {
+      await pushBookToRemote(book);
+      const { url } = await createBookShareLink(book.id);
+      await Clipboard.setStringAsync(url);
+      Alert.alert("Link skopiowany", url, [
+        { text: "OK", style: "cancel" },
+        {
+          text: "Udostępnij",
+          onPress: () => {
+            void Share.share({ message: url, title: book.title }).catch(() => undefined);
+          },
+        },
+      ]);
+    } catch (error) {
+      Alert.alert(
+        "Link do tekstu",
+        error instanceof Error ? error.message : "Nie udało się wygenerować linku.",
+      );
+    } finally {
+      setLinkBusy(false);
+    }
+  };
+
   if (loading || !book) {
     return <Loader label="Składam tekst…" />;
   }
@@ -95,15 +135,17 @@ export default function BookTextScreen() {
         title={book.title}
         subtitle={`Cały tekst · ${pagesLabel(book.pages.length)}`}
         right={
-          <IconButton
-            name="share"
-            accessibilityLabel="Udostępnij tekst"
-            variant="outline"
-            size={42}
-            round
-            disabled={book.pages.length === 0}
-            onPress={() => void onShareText()}
-          />
+          <View style={styles.appBarActions}>
+            <IconButton
+              name="share"
+              accessibilityLabel="Kopiuj link do tekstu"
+              variant="outline"
+              size={42}
+              round
+              disabled={book.pages.length === 0 || linkBusy}
+              onPress={() => void onShareLink()}
+            />
+          </View>
         }
       />
 
@@ -111,7 +153,7 @@ export default function BookTextScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
           styles.content,
-          { paddingBottom: 92 + Math.max(insets.bottom, space.md) },
+          { paddingBottom: 140 + Math.max(insets.bottom, space.md) },
         ]}
       >
         <ScanQueueCard />
@@ -183,10 +225,19 @@ export default function BookTextScreen() {
         ]}
       >
         <Button
-          label="Udostępnij cały tekst"
+          label="Kopiuj link do tekstu"
           icon="share"
           size="lg"
-          disabled={book.pages.length === 0}
+          loading={linkBusy}
+          disabled={book.pages.length === 0 || linkBusy}
+          onPress={() => void onShareLink()}
+        />
+        <Button
+          label="Udostępnij cały tekst"
+          icon="export"
+          size="lg"
+          variant="outline"
+          disabled={book.pages.length === 0 || linkBusy}
           onPress={() => void onShareText()}
         />
       </View>
@@ -247,5 +298,10 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     paddingHorizontal: space.lg,
+    gap: space.sm,
+  },
+  appBarActions: {
+    flexDirection: "row",
+    gap: space.sm,
   },
 });

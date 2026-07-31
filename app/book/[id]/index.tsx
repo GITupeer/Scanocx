@@ -1,4 +1,5 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import {
   useCallback,
@@ -15,6 +16,7 @@ import {
   Image,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -41,10 +43,12 @@ import {
   resumePendingCloudAi,
   useAiQueue,
 } from '@/src/ai/queue';
+import { createBookShareLink } from '@/src/api/endpoints';
 import { useAuth } from '@/src/auth/AuthProvider';
 import type { AiAnalysis, Book, BookPage } from '@/src/domain/types';
 import { getImageSize } from '@/src/images/ensurePortrait';
 import { getLibraryBook } from '@/src/library/books';
+import { pushBookToRemote } from '@/src/library/remote';
 import {
   cancelOcrForBook,
   cancelOcrForPage,
@@ -759,6 +763,48 @@ export default function BookDetailScreen() {
       }
     })();
   }, [book, renameTitle]);
+
+  const onShareTextLink = useCallback(() => {
+    if (!book || actionBusy) return;
+    if (!isLoggedIn) {
+      Alert.alert('Link do tekstu', 'Zaloguj się, aby wygenerować publiczny link.');
+      return;
+    }
+    if (!isApiConfigured()) {
+      Alert.alert('Link do tekstu', 'Brak konfiguracji API (EXPO_PUBLIC_API_BASE_URL).');
+      return;
+    }
+    if (book.pages.length === 0) {
+      Alert.alert('Link do tekstu', 'Dodaj przynajmniej jedną stronę, zanim udostępnisz tekst.');
+      return;
+    }
+
+    setBookMenu(false);
+    setActionBusy(true);
+    void (async () => {
+      try {
+        await pushBookToRemote(book);
+        const { url } = await createBookShareLink(book.id);
+        await Clipboard.setStringAsync(url);
+        Alert.alert('Link skopiowany', url, [
+          { text: 'OK', style: 'cancel' },
+          {
+            text: 'Udostępnij',
+            onPress: () => {
+              void Share.share({ message: url, title: book.title }).catch(() => undefined);
+            },
+          },
+        ]);
+      } catch (error) {
+        Alert.alert(
+          'Link do tekstu',
+          error instanceof Error ? error.message : 'Nie udało się wygenerować linku.'
+        );
+      } finally {
+        setActionBusy(false);
+      }
+    })();
+  }, [actionBusy, book, isLoggedIn]);
 
   const onPickCover = useCallback(() => {
     if (!book) return;
@@ -1510,6 +1556,18 @@ export default function BookDetailScreen() {
               setBookMenu(false);
               router.push(`/book/${book.id}/text`);
             }}
+          />
+          <SheetDivider />
+          <Row
+            icon="share"
+            label="Link do tekstu"
+            detail={
+              isLoggedIn
+                ? 'Publiczny URL z AI / OCR, podzielony na strony'
+                : 'Wymaga zalogowania'
+            }
+            disabled={!hasPages || actionBusy || !isLoggedIn}
+            onPress={onShareTextLink}
           />
           <SheetDivider />
           <Row

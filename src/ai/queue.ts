@@ -849,22 +849,9 @@ async function startCloudAnalysis(
   startTicker();
   publish();
 
-  // Tylko lokalnie — sync pending/null na API wyścigował z jobami i kasował gotowe ai_text.
-  await withBookMetaLock(() =>
-    updatePagesAi(
-      bookId,
-      pages.map((page) => ({
-        pageId: page.id,
-        aiStatus: 'pending' as const,
-        aiError: null,
-        aiAnalysis: null,
-      })),
-      { syncRemote: false }
-    )
-  );
-
   const batchIds: number[] = [];
   const chunkTotals: number[] = [];
+  let lastQueuePosition: number | null = null;
 
   try {
     for (let offset = 0; offset < pages.length; offset += AI_UPLOAD_CHUNK_SIZE) {
@@ -899,15 +886,31 @@ async function startCloudAnalysis(
       batchIds.push(batch.id);
       chunkTotals.push(chunk.length);
       cloudBatchId = batch.id;
-      queuePosition = batch.queue_position;
+      lastQueuePosition = batch.queue_position;
+      // Pozycja w kolejce AI dopiero po pełnej wysyłce — nie mieszać z postępem uploadu.
       await persistActiveBatches(bookId, batchIds, chunkTotals);
       phase = 'sending';
       phaseDetail = `Wysłano ${prepared}/${total}…`;
       publish();
     }
 
+    // Status korekty AI dopiero po zakończeniu wysyłki do chmury.
+    await withBookMetaLock(() =>
+      updatePagesAi(
+        bookId,
+        pages.map((page) => ({
+          pageId: page.id,
+          aiStatus: 'pending' as const,
+          aiError: null,
+          aiAnalysis: null,
+        })),
+        { syncRemote: false }
+      )
+    );
+
     completed = 0;
     prepared = total;
+    queuePosition = lastQueuePosition;
     phase = 'queued';
     phaseDetail =
       queuePosition != null

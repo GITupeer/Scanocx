@@ -11,12 +11,13 @@ import { colors, font, gradients, radius, shadow, space } from './theme';
 
 function userDetail(queue: ReturnType<typeof useAiQueue>): string {
   if (queue.lastError) return queue.lastError;
-  if (queue.queuePosition != null && queue.queuePosition > 1) {
-    return `W kolejce — pozycja ${queue.queuePosition}`;
-  }
+  // Najpierw wysyłka — dopiero po niej kolejka / korekta AI.
   if (queue.phase === 'preparing' || queue.phase === 'sending') {
     if (queue.phaseDetail.trim()) return queue.phaseDetail;
     return `Wysyłam strony do chmury… ${queue.prepared}/${queue.total}`;
+  }
+  if (queue.queuePosition != null && queue.queuePosition > 1) {
+    return `W kolejce — pozycja ${queue.queuePosition}`;
   }
   if (queue.phase === 'queued' || queue.phase === 'waiting') {
     return 'Oczekiwanie w kolejce…';
@@ -59,7 +60,9 @@ export function AiQueueCard({ style }: { style?: StyleProp<ViewStyle> }) {
         )}
 
         <View style={styles.headerText}>
-          <Text style={styles.title}>Analiza i Korekta AI</Text>
+          <Text style={styles.title}>
+            {uploading ? 'Wysyłanie do chmury' : 'Analiza i Korekta AI'}
+          </Text>
           <Text style={styles.detail} numberOfLines={2}>
             {userDetail(queue)}
           </Text>

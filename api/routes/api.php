@@ -25,6 +25,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/books/{localId}', [BookController::class, 'show']);
     Route::patch('/books/{localId}', [BookController::class, 'update']);
     Route::delete('/books/{localId}', [BookController::class, 'destroy']);
+    Route::post('/books/{localId}/share', [BookController::class, 'share']);
     Route::post('/books/{localId}/pages', [BookController::class, 'storePage']);
     Route::patch('/books/{localId}/pages/{pageLocalId}', [BookController::class, 'updatePage']);
     Route::delete('/books/{localId}/pages/{pageLocalId}', [BookController::class, 'destroyPage']);
