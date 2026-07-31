@@ -32,7 +32,6 @@ ANALIZA JSON (dla każdej pozycji w pages):
 - page_number: numer z marginesu lub null; jeśli wykryty — USUŃ go z corrected_text.
 - ocr_quality (0.00–1.00): czytelność SKANU tej strony. ≥0.85 ostry; 0.50–0.84 drobne problemy; <0.50 gdy jakakolwiek istotna część nieczytelna (im gorzej, tym niżej; zgadywanie → <0.50).
 - coherence (0.00–1.00): spójność corrected_text po korekcie.
-- bounds: prostokąt papieru tej strony na zdjęciu w PROCENTACH 0–100 całego obrazu: left, top, right, bottom (left < right, top < bottom). Przykład lewej strony rozkładówki: left=2, top=4, right=49, bottom=96. Prawej: left=51, top=4, right=98, bottom=96. Jedna strona prawie na cały kadr: left=3, top=3, right=97, bottom=97. NIGDY nie ustawiaj wszystkich na 0 albo 100 — podaj realne krawędzie kartki.
 PROMPT;
 
     /**
@@ -81,7 +80,7 @@ PROMPT;
                     [
                         'role' => 'user',
                         'parts' => [
-                            ['text' => 'Odczytaj i popraw tekst ze zdjęcia książki. Jeśli widać wiele stron, zwróć je wszystkie w pages (kolejność lewa→prawa). Dla każdej strony podaj bounds (left,top,right,bottom) w procentach 0–100 całego zdjęcia — prostokąt obejmujący papier tej strony. Zwróć JSON zgodnie ze schematem.'],
+                            ['text' => 'Odczytaj i popraw tekst ze zdjęcia książki. Jeśli widać wiele stron, zwróć je wszystkie w pages (kolejność lewa→prawa). Zwróć JSON zgodnie ze schematem.'],
                             [
                                 'inline_data' => [
                                     'mime_type' => $mimeType,
@@ -94,7 +93,7 @@ PROMPT;
                 'generationConfig' => [
                     'temperature' => 0.2,
                     'maxOutputTokens' => 65536,
-                    'mediaResolution' => 'MEDIA_RESOLUTION_MEDIUM',
+                    'mediaResolution' => 'MEDIA_RESOLUTION_LOW',
                     'responseMimeType' => 'application/json',
                     'responseSchema' => [
                         'type' => 'OBJECT',
@@ -144,29 +143,6 @@ PROMPT;
                                             'nullable' => true,
                                             'description' => 'Numer strony lub null; usunięty z corrected_text gdy wykryty.',
                                         ],
-                                        'bounds' => [
-                                            'type' => 'OBJECT',
-                                            'description' => 'Prostokąt papieru strony w procentach 0–100 całego zdjęcia (left < right, top < bottom).',
-                                            'properties' => [
-                                                'left' => [
-                                                    'type' => 'NUMBER',
-                                                    'description' => 'Lewa krawędź kartki, % szerokości obrazu (0–100).',
-                                                ],
-                                                'top' => [
-                                                    'type' => 'NUMBER',
-                                                    'description' => 'Górna krawędź kartki, % wysokości obrazu (0–100).',
-                                                ],
-                                                'right' => [
-                                                    'type' => 'NUMBER',
-                                                    'description' => 'Prawa krawędź kartki, % szerokości obrazu (0–100).',
-                                                ],
-                                                'bottom' => [
-                                                    'type' => 'NUMBER',
-                                                    'description' => 'Dolna krawędź kartki, % wysokości obrazu (0–100).',
-                                                ],
-                                            ],
-                                            'required' => ['left', 'top', 'right', 'bottom'],
-                                        ],
                                     ],
                                     'required' => [
                                         'corrected_text',
@@ -178,7 +154,6 @@ PROMPT;
                                         'coherence',
                                         'page_number_detected',
                                         'page_number',
-                                        'bounds',
                                     ],
                                 ],
                             ],
@@ -318,7 +293,7 @@ PROMPT;
             $quality = $this->clampScore($page['ocr_quality'] ?? 0);
             $coherence = $this->clampScore($page['coherence'] ?? 0);
 
-            $item = [
+            $pageItems[] = [
                 'text' => $text,
                 'title' => $itemTitle,
                 'subtitle' => $itemSubtitle,
@@ -326,19 +301,6 @@ PROMPT;
                 'ocr_quality' => $quality,
                 'coherence' => $coherence,
             ];
-            // Preferuj prosty bbox %; corners (stary format) jako fallback.
-            $bounds = $this->parseBoundsPercent($page['bounds'] ?? null);
-            if ($bounds !== null) {
-                $item['bounds'] = $bounds;
-                $item['corners'] = $this->boundsToCorners01($bounds);
-            } else {
-                $corners = $this->parseCorners($page['corners'] ?? null);
-                if ($corners !== null) {
-                    $item['corners'] = $corners;
-                    $item['bounds'] = $this->corners01ToBoundsPercent($corners);
-                }
-            }
-            $pageItems[] = $item;
 
             if ($title === null && $itemTitle !== null) {
                 $title = $itemTitle;
@@ -447,183 +409,6 @@ PROMPT;
         }
 
         return [$out, 'image/jpeg'];
-    }
-
-    /**
-     * @return array{left: float, top: float, right: float, bottom: float}|null  procenty 0–100
-     */
-    private function parseBoundsPercent(mixed $raw): ?array
-    {
-        if (! is_array($raw)) {
-            return null;
-        }
-        foreach (['left', 'top', 'right', 'bottom'] as $key) {
-            if (! is_numeric($raw[$key] ?? null)) {
-                return null;
-            }
-        }
-
-        $left = (float) $raw['left'];
-        $top = (float) $raw['top'];
-        $right = (float) $raw['right'];
-        $bottom = (float) $raw['bottom'];
-
-        // Jeśli model podał 0–1 zamiast %, przeskaluj.
-        $max = max($left, $top, $right, $bottom);
-        if ($max <= 1.0001) {
-            $left *= 100;
-            $top *= 100;
-            $right *= 100;
-            $bottom *= 100;
-        }
-
-        $left = $this->clampPercent($left);
-        $top = $this->clampPercent($top);
-        $right = $this->clampPercent($right);
-        $bottom = $this->clampPercent($bottom);
-
-        if ($right - $left < 3 || $bottom - $top < 3) {
-            return null;
-        }
-
-        return [
-            'left' => round($left, 2),
-            'top' => round($top, 2),
-            'right' => round($right, 2),
-            'bottom' => round($bottom, 2),
-        ];
-    }
-
-    /**
-     * @param  array{left: float, top: float, right: float, bottom: float}  $bounds
-     * @return array{
-     *   top_left: array{x: float, y: float},
-     *   top_right: array{x: float, y: float},
-     *   bottom_right: array{x: float, y: float},
-     *   bottom_left: array{x: float, y: float}
-     * }
-     */
-    private function boundsToCorners01(array $bounds): array
-    {
-        $l = $bounds['left'] / 100;
-        $t = $bounds['top'] / 100;
-        $r = $bounds['right'] / 100;
-        $b = $bounds['bottom'] / 100;
-
-        return [
-            'top_left' => ['x' => $this->clampUnit($l), 'y' => $this->clampUnit($t)],
-            'top_right' => ['x' => $this->clampUnit($r), 'y' => $this->clampUnit($t)],
-            'bottom_right' => ['x' => $this->clampUnit($r), 'y' => $this->clampUnit($b)],
-            'bottom_left' => ['x' => $this->clampUnit($l), 'y' => $this->clampUnit($b)],
-        ];
-    }
-
-    /**
-     * @param  array{
-     *   top_left: array{x: float, y: float},
-     *   top_right: array{x: float, y: float},
-     *   bottom_right: array{x: float, y: float},
-     *   bottom_left: array{x: float, y: float}
-     * }  $corners
-     * @return array{left: float, top: float, right: float, bottom: float}
-     */
-    private function corners01ToBoundsPercent(array $corners): array
-    {
-        $xs = [
-            $corners['top_left']['x'],
-            $corners['top_right']['x'],
-            $corners['bottom_right']['x'],
-            $corners['bottom_left']['x'],
-        ];
-        $ys = [
-            $corners['top_left']['y'],
-            $corners['top_right']['y'],
-            $corners['bottom_right']['y'],
-            $corners['bottom_left']['y'],
-        ];
-
-        return [
-            'left' => round(min($xs) * 100, 2),
-            'top' => round(min($ys) * 100, 2),
-            'right' => round(max($xs) * 100, 2),
-            'bottom' => round(max($ys) * 100, 2),
-        ];
-    }
-
-    /**
-     * Zwraca corners w skali 0–1. Wejście: 0–1 albo 0–100 (%).
-     *
-     * @return array{
-     *   top_left: array{x: float, y: float},
-     *   top_right: array{x: float, y: float},
-     *   bottom_right: array{x: float, y: float},
-     *   bottom_left: array{x: float, y: float}
-     * }|null
-     */
-    private function parseCorners(mixed $raw): ?array
-    {
-        if (! is_array($raw)) {
-            return null;
-        }
-
-        $keys = ['top_left', 'top_right', 'bottom_right', 'bottom_left'];
-        $rawPoints = [];
-        foreach ($keys as $key) {
-            $point = $raw[$key] ?? null;
-            if (! is_array($point) || ! is_numeric($point['x'] ?? null) || ! is_numeric($point['y'] ?? null)) {
-                return null;
-            }
-            $rawPoints[$key] = [
-                'x' => (float) $point['x'],
-                'y' => (float) $point['y'],
-            ];
-        }
-
-        $max = 0.0;
-        foreach ($rawPoints as $p) {
-            $max = max($max, $p['x'], $p['y']);
-        }
-        $scale = $max > 1.0001 ? 100.0 : 1.0;
-
-        $out = [];
-        foreach ($keys as $key) {
-            $out[$key] = [
-                'x' => $this->clampUnit($rawPoints[$key]['x'] / $scale),
-                'y' => $this->clampUnit($rawPoints[$key]['y'] / $scale),
-            ];
-        }
-
-        $xs = array_column($out, 'x');
-        $ys = array_column($out, 'y');
-        if (max($xs) - min($xs) < 0.03 || max($ys) - min($ys) < 0.03) {
-            return null;
-        }
-
-        return $out;
-    }
-
-    private function clampPercent(float $n): float
-    {
-        if ($n < 0) {
-            return 0.0;
-        }
-        if ($n > 100) {
-            return 100.0;
-        }
-
-        return $n;
-    }
-
-    private function clampUnit(float $n): float
-    {
-        if ($n < 0) {
-            $n = 0.0;
-        }
-        if ($n > 1) {
-            $n = 1.0;
-        }
-
-        return round($n, 4);
     }
 
     private function nullableString(mixed $value): ?string

@@ -42,7 +42,7 @@ import {
   useAiQueue,
 } from '@/src/ai/queue';
 import { useAuth } from '@/src/auth/AuthProvider';
-import type { AiAnalysis, AiPageText, Book, BookPage } from '@/src/domain/types';
+import type { AiAnalysis, Book, BookPage } from '@/src/domain/types';
 import { getImageSize } from '@/src/images/ensurePortrait';
 import { getLibraryBook } from '@/src/library/books';
 import {
@@ -87,7 +87,6 @@ import {
   Icon,
   Loader,
   OcrStatusBadge,
-  PageCornersOverlay,
   PageImagePlaceholder,
   Row,
   ScanQueueCard,
@@ -833,7 +832,6 @@ export default function BookDetailScreen() {
           aiOnly={!!item.aiOnly}
           onPress={() => openPageMenu(item)}
           disabled={showOcr || actionBusy}
-          cornerPages={item.aiAnalysis?.pages}
           badge={
             <>
               {getAiDetectedPageCount(item) > 1 ? (
@@ -1624,7 +1622,6 @@ function AdaptiveCardImage({
   disabled,
   badge,
   overlay,
-  cornerPages,
 }: {
   uri: string | null;
   aiOnly?: boolean;
@@ -1632,7 +1629,6 @@ function AdaptiveCardImage({
   disabled?: boolean;
   badge?: ReactNode;
   overlay?: ReactNode;
-  cornerPages?: AiPageText[];
 }) {
   const [aspectRatio, setAspectRatio] = useState(aiOnly ? 4 / 3 : 3 / 4);
 
@@ -1667,7 +1663,6 @@ function AdaptiveCardImage({
           <PageImagePlaceholder />
         )}
       </Pressable>
-      <PageCornersOverlay pages={cornerPages} strokeWidth={2} />
       {badge}
       {overlay}
     </View>

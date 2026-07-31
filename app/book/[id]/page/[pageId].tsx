@@ -7,7 +7,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { isApiConfigured } from '@/src/ai/config';
-import { formatBoundsPercent, formatCornerPercent } from '@/src/ai/corners';
 import { estimateGeminiRequestCost, formatUsd } from '@/src/ai/pricing';
 import {
   cancelAiForPage,
@@ -40,7 +39,6 @@ import {
   IconButton,
   Loader,
   OcrStatusBadge,
-  PageCornersOverlay,
   PageImagePlaceholder,
   Row,
   ScanQueueCard,
@@ -313,8 +311,6 @@ export default function PageDetailScreen() {
                 pageNumber: num,
                 ocrQuality: prev?.ocrQuality ?? page.aiAnalysis?.ocrQuality ?? 0,
                 coherence: prev?.coherence ?? page.aiAnalysis?.coherence ?? 0,
-                ...(prev?.corners ? { corners: prev.corners } : {}),
-                ...(prev?.bounds ? { bounds: prev.bounds } : {}),
               };
             })
           : undefined;
@@ -598,8 +594,6 @@ export default function PageDetailScreen() {
                 <PageImagePlaceholder style={styles.image} />
               )}
 
-              <PageCornersOverlay pages={page.aiAnalysis?.pages} />
-
               <View style={styles.imageBadge}>
                 {aiPageTexts.length > 1 ? (
                   <View style={styles.multiPageBadge}>
@@ -661,44 +655,6 @@ export default function PageDetailScreen() {
                 ) : null}
               </View>
             ) : null}
-
-            <View style={styles.cornersDebug}>
-              <Text style={styles.cornersDebugTitle}>Narożniki AI (debug)</Text>
-              {!page.aiAnalysis?.pages?.length ? (
-                <Text style={styles.cornersDebugEmpty}>
-                  Brak aiAnalysis.pages — uruchom Analizę AI ponownie (nowy schemat z corners).
-                </Text>
-              ) : (
-                page.aiAnalysis.pages.map((aiPage, index) => {
-                  const c = aiPage.corners;
-                  const b = aiPage.bounds;
-                  return (
-                    <View key={`corners-dbg-${index}`} style={styles.cornersDebugCard}>
-                      <Text style={styles.cornersDebugLabel}>
-                        Strona {index + 1}
-                        {aiPage.pageNumber ? ` · nr ${aiPage.pageNumber}` : ''}
-                      </Text>
-                      {b ? (
-                        <Text style={styles.cornersDebugMono} selectable>
-                          {`bounds: ${formatBoundsPercent(b)}`}
-                        </Text>
-                      ) : (
-                        <Text style={styles.cornersDebugEmpty}>brak bounds</Text>
-                      )}
-                      {c ? (
-                        <Text style={styles.cornersDebugMono} selectable>
-                          {`TL ${formatCornerPercent(c.topLeft)}\nTR ${formatCornerPercent(c.topRight)}\nBR ${formatCornerPercent(c.bottomRight)}\nBL ${formatCornerPercent(c.bottomLeft)}`}
-                        </Text>
-                      ) : (
-                        <Text style={styles.cornersDebugEmpty}>
-                          brak corners — ponów Analizę AI (nowy schemat bounds)
-                        </Text>
-                      )}
-                    </View>
-                  );
-                })
-              )}
-            </View>
 
             {aiPageTexts.length > 1 ? (
               <View style={styles.pageNumbersStack}>
@@ -1178,42 +1134,6 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     color: colors.muted,
     marginTop: -space.xs,
-  },
-  cornersDebug: {
-    gap: space.sm,
-    padding: space.md,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: colors.line,
-  },
-  cornersDebugTitle: {
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: colors.ink,
-  },
-  cornersDebugCard: {
-    gap: 4,
-    paddingTop: space.sm,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.line,
-  },
-  cornersDebugLabel: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: colors.inkSoft,
-  },
-  cornersDebugMono: {
-    fontSize: 12,
-    lineHeight: 18,
-    fontWeight: '600',
-    color: colors.ink,
-    fontVariant: ['tabular-nums'],
-  },
-  cornersDebugEmpty: {
-    fontSize: 12.5,
-    lineHeight: 17,
-    color: colors.muted,
   },
   previewTabRow: {
     flexDirection: 'row',
