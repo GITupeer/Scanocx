@@ -25,6 +25,7 @@ import { LiveDetectEdgesView, takePhoto } from "react-native-live-detect-edges";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/auth/AuthProvider";
+import { ensureLandscapeUri } from "@/src/images/ensurePortrait";
 import { enhanceScanClarity } from "@/src/images/enhanceScanClarity";
 import { ensureLocalBook } from "@/src/library/books";
 import { runPageOcrExclusive } from "@/src/ocr/queue";
@@ -175,6 +176,9 @@ export default function CaptureScreen() {
   /** Rozkładówka / wiele stron — landscape, pełna klatka, tylko AI. */
   const [multiPageMode, setMultiPageMode] = useState(false);
   multiPageModeRef.current = multiPageMode;
+  /** Remount natywnej kamery po zmianie orientacji (targetRotation). */
+  const [cameraEpoch, setCameraEpoch] = useState(0);
+  const skipNextCameraRemountRef = useRef(true);
 
   useEffect(() => {
     if (!ready) return;
@@ -260,11 +264,25 @@ export default function CaptureScreen() {
   );
 
   useEffect(() => {
-    void ScreenOrientation.lockAsync(
-      multiPageMode
-        ? ScreenOrientation.OrientationLock.LANDSCAPE
-        : ScreenOrientation.OrientationLock.PORTRAIT_UP,
-    );
+    let cancelled = false;
+    void (async () => {
+      await ScreenOrientation.lockAsync(
+        multiPageMode
+          ? ScreenOrientation.OrientationLock.LANDSCAPE
+          : ScreenOrientation.OrientationLock.PORTRAIT_UP,
+      );
+      // Pierwsze wejście na ekran — kamera i tak się zbindowuje; remount tylko
+      // po przełączeniu trybu (portrait ↔ landscape), gdy display.rotation się zmienia.
+      if (skipNextCameraRemountRef.current) {
+        skipNextCameraRemountRef.current = false;
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 160));
+      if (!cancelled) setCameraEpoch((n) => n + 1);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [multiPageMode]);
 
   const setMultiPageModeOn = useCallback((on: boolean) => {
@@ -447,16 +465,22 @@ export default function CaptureScreen() {
         const skipOcr = aiOnly || !runOcrRef.current;
         let savePath = uri;
 
-        if (!aiOnly && enhanceDocumentRef.current) {
+        if (aiOnly) {
+          // Natywny skaner często zapisuje klatkę w pionie mimo landscape UI —
+          // wymuś poziomy JPEG (width >= height) przed zapisem.
+          patchStep("enhance", "active", "orientacja");
+          savePath = await ensureLandscapeUri(uri);
+          patchStep("enhance", "done");
+        } else if (enhanceDocumentRef.current) {
           patchStep("enhance", "active");
           savePath = await enhanceScanClarity(uri, { mode: "document" });
           patchStep("enhance", "done");
         } else {
-          patchStep("enhance", "skipped", aiOnly ? "tryb wielu stron" : "wyłączona");
+          patchStep("enhance", "skipped", "wyłączona");
         }
 
         await saveProcessedUri(savePath, {
-          originalUri: original,
+          originalUri: aiOnly ? null : original,
           skipOcr,
           aiOnly,
         });
@@ -579,10 +603,11 @@ export default function CaptureScreen() {
   const shutterLocked = busy;
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, multiPageMode && styles.rootLandscape]}>
       <View style={styles.stage}>
         {!nativeMissing ? (
           <LiveDetectEdgesView
+            key={`scan-cam-${cameraEpoch}`}
             style={StyleSheet.absoluteFill}
             overlayColor={
               !multiPageMode && cropEdges
@@ -609,7 +634,17 @@ export default function CaptureScreen() {
 
         <View
           pointerEvents="box-none"
-          style={[styles.topBar, { paddingTop: insets.top + space.sm }]}
+          style={[
+            styles.topBar,
+            {
+              paddingTop: multiPageMode
+                ? Math.max(insets.top, space.sm)
+                : insets.top + space.sm,
+              paddingLeft: multiPageMode
+                ? Math.max(insets.left, space.lg)
+                : space.lg,
+            },
+          ]}
         >
           <IconButton
             name="close"
@@ -626,7 +661,16 @@ export default function CaptureScreen() {
 
         <View
           pointerEvents="none"
-          style={[styles.statusChip, { top: insets.top + space.sm + 7 }]}
+          style={[
+            styles.statusChip,
+            multiPageMode
+              ? {
+                  top: Math.max(insets.top, space.sm) + 7,
+                  left: Math.max(insets.left, space.lg) + 52,
+                  alignSelf: "flex-start",
+                }
+              : { top: insets.top + space.sm + 7 },
+          ]}
         >
           <View
             style={[
@@ -638,7 +682,7 @@ export default function CaptureScreen() {
           />
           <Text style={styles.statusText}>
             {multiPageMode
-              ? "Wiele stron · tylko AI · obróć telefon"
+              ? "Wiele stron · tylko AI"
               : !cropEdges && !enhanceDocument && !runOcr
                 ? "Zdjęcie → zapis"
                 : !cropEdges
@@ -654,7 +698,15 @@ export default function CaptureScreen() {
         </View>
 
         {!progress ? (
-          <View style={styles.scanToggles}>
+          <View
+            style={[
+              styles.scanToggles,
+              multiPageMode && [
+                styles.scanTogglesLandscape,
+                { left: Math.max(insets.left, space.lg) },
+              ],
+            ]}
+          >
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ checked: multiPageMode, disabled: busy }}
@@ -792,7 +844,13 @@ export default function CaptureScreen() {
         ) : null}
 
         {progress ? (
-          <View pointerEvents="none" style={styles.progressCard}>
+          <View
+            pointerEvents="none"
+            style={[
+              styles.progressCard,
+              multiPageMode && styles.progressCardLandscape,
+            ]}
+          >
             <View style={styles.progressHeader}>
               <Text style={styles.progressTitle}>{progress.title}</Text>
               {!isReplace && sessionCount > 0 ? (
@@ -832,11 +890,17 @@ export default function CaptureScreen() {
 
       <Gradient
         colors={gradients.night}
-        angle={180}
+        angle={multiPageMode ? 90 : 180}
         fallbackColor={colors.night}
         style={[
-          styles.bar,
-          { paddingBottom: Math.max(insets.bottom, space.lg) },
+          multiPageMode ? styles.barLandscape : styles.bar,
+          multiPageMode
+            ? {
+                paddingRight: Math.max(insets.right, space.md),
+                paddingTop: Math.max(insets.top, space.md),
+                paddingBottom: Math.max(insets.bottom, space.md),
+              }
+            : { paddingBottom: Math.max(insets.bottom, space.lg) },
         ]}
       >
         <Pressable
@@ -908,6 +972,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.night,
   },
+  rootLandscape: {
+    flexDirection: "row",
+  },
   stage: {
     flex: 1,
     backgroundColor: "#000",
@@ -956,6 +1023,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: space.sm,
     paddingHorizontal: space.lg,
+  },
+  scanTogglesLandscape: {
+    right: "auto",
+    bottom: space.lg,
+    flexDirection: "column",
+    alignItems: "flex-start",
+    justifyContent: "flex-end",
+    paddingHorizontal: 0,
   },
   scanToggle: {
     flexDirection: "row",
@@ -1024,6 +1099,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
     paddingVertical: space.md,
     gap: space.sm,
+  },
+  progressCardLandscape: {
+    left: space.lg,
+    right: space.lg,
+    bottom: space.lg,
+    maxWidth: 360,
   },
   progressHeader: {
     flexDirection: "row",
@@ -1106,6 +1187,13 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: space.xl,
     paddingTop: space.lg,
+  },
+  barLandscape: {
+    width: 148,
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingLeft: space.lg,
   },
   sideButton: {
     width: 82,

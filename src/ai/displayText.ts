@@ -1,9 +1,21 @@
 import type { BookPage, OcrStatus } from '@/src/domain/types';
 
+/** Liczba stron wykrytych przez AI na jednym zdjęciu (0 gdy brak wyniku). */
+export function getAiDetectedPageCount(page: BookPage): number {
+  const pages = page.aiAnalysis?.pages;
+  if (pages && pages.length > 0) return pages.length;
+  if (page.aiStatus === 'done' && page.aiText.trim()) return 1;
+  return 0;
+}
+
 /** Preferuj tekst AI, gdy korekta się udała; w przeciwnym razie surowy OCR. */
 export function getDisplayText(page: BookPage): string {
-  if (page.aiStatus === 'done' && page.aiText.trim()) {
-    return page.aiText;
+  if (page.aiStatus === 'done') {
+    const pages = page.aiAnalysis?.pages;
+    if (pages && pages.length > 0) {
+      return pages.map((p) => p.text).join('\n\n\n');
+    }
+    if (page.aiText.trim()) return page.aiText;
   }
   return page.ocrText;
 }

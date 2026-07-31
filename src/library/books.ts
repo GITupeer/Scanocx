@@ -3,6 +3,7 @@ import type { ApiBook, ApiBookPage, ApiBookSummary } from '@/src/api/types';
 import { resolvePageOcrStatus } from '@/src/ai/displayText';
 import type {
   AiAnalysis,
+  AiPageText,
   AiStatus,
   Book,
   BookPage,
@@ -27,6 +28,24 @@ function normalizeTokenCount(value: unknown): number | null {
   return Math.round(value);
 }
 
+function mapApiAiPage(raw: unknown): AiPageText | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const item = raw as Record<string, unknown>;
+  const text = typeof item.text === 'string' ? item.text.trim() : '';
+  if (!text) return null;
+  const ocrRaw = item.ocr_quality ?? item.ocrQuality;
+  const pageRaw = item.page_number ?? item.pageNumber;
+  return {
+    text,
+    title: typeof item.title === 'string' && item.title.trim() ? item.title.trim() : null,
+    subtitle:
+      typeof item.subtitle === 'string' && item.subtitle.trim() ? item.subtitle.trim() : null,
+    pageNumber: typeof pageRaw === 'string' && pageRaw.trim() ? pageRaw.trim() : null,
+    ocrQuality: typeof ocrRaw === 'number' ? clampScore(ocrRaw) : 0,
+    coherence: typeof item.coherence === 'number' ? clampScore(item.coherence) : 0,
+  };
+}
+
 /** Mapuje ai_meta z backendu (snake_case lub camelCase) na AiAnalysis. */
 export function mapApiAiMeta(raw: unknown): AiAnalysis | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -36,6 +55,11 @@ export function mapApiAiMeta(raw: unknown): AiAnalysis | null {
   const pageRaw = meta.page_number ?? meta.pageNumber;
   const titleRaw = meta.title;
   const subtitleRaw = meta.subtitle;
+  const pages = Array.isArray(meta.pages)
+    ? meta.pages
+        .map((p) => mapApiAiPage(p))
+        .filter((p): p is AiPageText => p != null)
+    : undefined;
 
   return {
     title: typeof titleRaw === 'string' && titleRaw.trim() ? titleRaw.trim() : null,
@@ -48,6 +72,7 @@ export function mapApiAiMeta(raw: unknown): AiAnalysis | null {
     promptTokens: normalizeTokenCount(meta.prompt_tokens ?? meta.promptTokens),
     outputTokens: normalizeTokenCount(meta.output_tokens ?? meta.outputTokens),
     totalTokens: normalizeTokenCount(meta.total_tokens ?? meta.totalTokens),
+    ...(pages && pages.length > 0 ? { pages } : {}),
   };
 }
 
@@ -163,6 +188,7 @@ export async function mapApiPageToBookPage(
     }),
     aiStatus,
     aiError: aiStatus === 'error' ? (localHint?.aiError ?? null) : null,
+    ...(localHint?.aiOnly ? { aiOnly: true as const } : {}),
     createdAt: page.created_at ?? localHint?.createdAt ?? new Date().toISOString(),
   };
 }

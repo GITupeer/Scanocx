@@ -14,6 +14,18 @@ function aiMetaToRemote(analysis: AiAnalysis | null): Record<string, unknown> | 
     prompt_tokens: analysis.promptTokens,
     output_tokens: analysis.outputTokens,
     total_tokens: analysis.totalTokens,
+    ...(analysis.pages && analysis.pages.length > 0
+      ? {
+          pages: analysis.pages.map((p) => ({
+            text: p.text,
+            title: p.title,
+            subtitle: p.subtitle,
+            page_number: p.pageNumber,
+            ocr_quality: p.ocrQuality,
+            coherence: p.coherence,
+          })),
+        }
+      : {}),
   };
 }
 

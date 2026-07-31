@@ -94,6 +94,14 @@ export type AiBatchJobMeta = {
   prompt_tokens?: number | null;
   output_tokens?: number | null;
   total_tokens?: number | null;
+  pages?: Array<{
+    text: string;
+    title: string | null;
+    subtitle: string | null;
+    page_number: string | null;
+    ocr_quality: number;
+    coherence: number;
+  }> | null;
 };
 
 export type AiBatchJob = {

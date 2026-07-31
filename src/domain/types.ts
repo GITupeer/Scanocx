@@ -17,6 +17,16 @@ export type OcrQuality = {
   confidence: OcrConfidenceQuality;
 };
 
+/** Jedna strona książki wykryta na zdjęciu przez AI (rozkładówka = wiele). */
+export type AiPageText = {
+  text: string;
+  title: string | null;
+  subtitle: string | null;
+  pageNumber: string | null;
+  ocrQuality: number;
+  coherence: number;
+};
+
 /** Metadane z korekty Gemini (tytuł, jakość, numer strony). */
 export type AiAnalysis = {
   /** Wykryty tytuł / nagłówek; null gdy brak. */
@@ -35,6 +45,11 @@ export type AiAnalysis = {
   outputTokens: number | null;
   /** Suma tokenów (wejście + wyjście + ewentualne thinking); null gdy brak. */
   totalTokens: number | null;
+  /**
+   * Poszczególne strony odczytane z jednego zdjęcia (kolejność lewa→prawa).
+   * Brak / pusta = starsze rekordy; wtedy używaj `aiText`.
+   */
+  pages?: AiPageText[];
 };
 
 export type BookPage = {

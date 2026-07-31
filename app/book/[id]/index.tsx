@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isApiConfigured } from '@/src/ai/config';
 import {
   canRunAiRewrite,
+  getAiDetectedPageCount,
   getDisplayText,
   hasReadyText,
   needsAiRewrite,
@@ -233,6 +234,12 @@ function ocrOverlayCopy(page: BookPage): string {
     return page.aiError?.trim() || 'Błąd korekty AI.';
   }
   if (page.ocrStatus === 'error') return 'Nie udało się odczytać tekstu z tej strony.';
+  const pages = page.aiAnalysis?.pages;
+  if (pages && pages.length > 1) {
+    return pages
+      .map((p, i) => `— Strona ${i + 1}${p.pageNumber ? ` (${p.pageNumber})` : ''} —\n${p.text}`)
+      .join('\n\n');
+  }
   const text = getDisplayText(page).trim();
   return text.length > 0 ? text : 'Brak rozpoznanego tekstu.';
 }
@@ -826,6 +833,13 @@ export default function BookDetailScreen() {
             )}
           </Pressable>
 
+          {getAiDetectedPageCount(item) > 1 ? (
+            <View style={styles.aiPagesBadge} pointerEvents="none">
+              <Icon name="bookOpen" size={12} color={colors.white} />
+              <Text style={styles.aiPagesBadgeText}>{getAiDetectedPageCount(item)}</Text>
+            </View>
+          ) : null}
+
           {showOcr ? (
             <View style={styles.ocrOverlay}>
               <View style={styles.ocrChip}>
@@ -869,6 +883,12 @@ export default function BookDetailScreen() {
           <Gradient colors={gradients.brand} style={styles.gridIndex}>
             <Text style={styles.gridIndexText}>{item.index}</Text>
           </Gradient>
+          {getAiDetectedPageCount(item) > 1 ? (
+            <View style={styles.aiPagesBadgeGrid} pointerEvents="none">
+              <Icon name="bookOpen" size={11} color={colors.white} />
+              <Text style={styles.aiPagesBadgeText}>{getAiDetectedPageCount(item)}</Text>
+            </View>
+          ) : null}
         </View>
         <View style={styles.gridMeta}>
           <Text style={styles.gridTitle} numberOfLines={1}>
@@ -1899,6 +1919,36 @@ const styles = StyleSheet.create({
     width: CARD_WIDTH,
     height: IMAGE_HEIGHT,
     backgroundColor: colors.surfaceSunken,
+  },
+  aiPagesBadge: {
+    position: 'absolute',
+    top: space.sm,
+    right: space.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(16, 191, 160, 0.92)',
+  },
+  aiPagesBadgeGrid: {
+    position: 'absolute',
+    top: space.sm,
+    right: space.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(16, 191, 160, 0.92)',
+  },
+  aiPagesBadgeText: {
+    color: colors.white,
+    fontSize: 12,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
   },
   image: {
     width: '100%',

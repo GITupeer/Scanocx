@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { resolvePageOcrStatus } from '@/src/ai/displayText';
 import type {
   AiAnalysis,
+  AiPageText,
   AiStatus,
   Book,
   BookPage,
@@ -65,6 +66,7 @@ function normalizePage(page: BookPage): BookPage {
     }),
     aiStatus,
     aiError: page.aiError ?? null,
+    ...(page.aiOnly ? { aiOnly: true as const } : {}),
   };
 }
 
@@ -92,10 +94,43 @@ async function copyPageImagePair(
   return { imageUri, originalImageUri };
 }
 
+function normalizeAiPageText(raw: unknown): AiPageText | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const item = raw as Record<string, unknown>;
+  const text = typeof item.text === 'string' ? item.text.trim() : '';
+  if (!text) return null;
+  return {
+    text,
+    title: typeof item.title === 'string' && item.title.trim() ? item.title.trim() : null,
+    subtitle:
+      typeof item.subtitle === 'string' && item.subtitle.trim() ? item.subtitle.trim() : null,
+    pageNumber:
+      typeof item.pageNumber === 'string' && item.pageNumber.trim()
+        ? item.pageNumber.trim()
+        : typeof item.page_number === 'string' && item.page_number.trim()
+          ? item.page_number.trim()
+          : null,
+    ocrQuality: clampScore(
+      typeof item.ocrQuality === 'number'
+        ? item.ocrQuality
+        : typeof item.ocr_quality === 'number'
+          ? item.ocr_quality
+          : 0
+    ),
+    coherence: clampScore(typeof item.coherence === 'number' ? item.coherence : 0),
+  };
+}
+
 function normalizeAiAnalysis(raw: BookPage['aiAnalysis'] | undefined): AiAnalysis | null {
   if (!raw || typeof raw !== 'object') return null;
   const ocrQ = typeof raw.ocrQuality === 'number' ? clampScore(raw.ocrQuality) : 0;
   const coherence = typeof raw.coherence === 'number' ? clampScore(raw.coherence) : 0;
+  const pagesRaw = Array.isArray(raw.pages) ? raw.pages : null;
+  const pages = pagesRaw
+    ? pagesRaw
+        .map((p) => normalizeAiPageText(p))
+        .filter((p): p is NonNullable<typeof p> => p != null)
+    : undefined;
   return {
     title: typeof raw.title === 'string' && raw.title.trim() ? raw.title.trim() : null,
     subtitle:
@@ -109,6 +144,7 @@ function normalizeAiAnalysis(raw: BookPage['aiAnalysis'] | undefined): AiAnalysi
     promptTokens: normalizeTokenCount(raw.promptTokens),
     outputTokens: normalizeTokenCount(raw.outputTokens),
     totalTokens: normalizeTokenCount(raw.totalTokens),
+    ...(pages && pages.length > 0 ? { pages } : {}),
   };
 }
 

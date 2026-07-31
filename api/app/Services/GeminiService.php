@@ -37,6 +37,14 @@ PROMPT;
     /**
      * @return array{
      *   text: string,
+     *   pages: list<array{
+     *     text: string,
+     *     title: string|null,
+     *     subtitle: string|null,
+     *     page_number: string|null,
+     *     ocr_quality: float,
+     *     coherence: float
+     *   }>,
      *   title: string|null,
      *   subtitle: string|null,
      *   ocr_quality: float,
@@ -220,6 +228,14 @@ PROMPT;
     /**
      * @return array{
      *   text: string,
+     *   pages: list<array{
+     *     text: string,
+     *     title: string|null,
+     *     subtitle: string|null,
+     *     page_number: string|null,
+     *     ocr_quality: float,
+     *     coherence: float
+     *   }>,
      *   title: string|null,
      *   subtitle: string|null,
      *   ocr_quality: float,
@@ -249,7 +265,7 @@ PROMPT;
             throw new RuntimeException('Gemini zwróciło pustą tablicę pages.');
         }
 
-        $texts = [];
+        $pageItems = [];
         $title = null;
         $subtitle = null;
         $pageNumber = null;
@@ -267,20 +283,35 @@ PROMPT;
             if ($text === '') {
                 continue;
             }
-            $texts[] = $text;
 
-            if ($title === null && (bool) ($page['has_title'] ?? false)) {
-                $title = $this->nullableString($page['title'] ?? null);
-            }
-            if ($subtitle === null && (bool) ($page['has_subtitle'] ?? false)) {
-                $subtitle = $this->nullableString($page['subtitle'] ?? null);
-            }
-            if ($pageNumber === null && (bool) ($page['page_number_detected'] ?? false)) {
-                $pageNumber = $this->nullableString($page['page_number'] ?? null);
-            }
-
+            $hasTitle = (bool) ($page['has_title'] ?? false);
+            $itemTitle = $hasTitle ? $this->nullableString($page['title'] ?? null) : null;
+            $hasSubtitle = (bool) ($page['has_subtitle'] ?? false);
+            $itemSubtitle = $hasSubtitle ? $this->nullableString($page['subtitle'] ?? null) : null;
+            $pageDetected = (bool) ($page['page_number_detected'] ?? false);
+            $itemPageNumber = $pageDetected ? $this->nullableString($page['page_number'] ?? null) : null;
             $quality = $this->clampScore($page['ocr_quality'] ?? 0);
             $coherence = $this->clampScore($page['coherence'] ?? 0);
+
+            $pageItems[] = [
+                'text' => $text,
+                'title' => $itemTitle,
+                'subtitle' => $itemSubtitle,
+                'page_number' => $itemPageNumber,
+                'ocr_quality' => $quality,
+                'coherence' => $coherence,
+            ];
+
+            if ($title === null && $itemTitle !== null) {
+                $title = $itemTitle;
+            }
+            if ($subtitle === null && $itemSubtitle !== null) {
+                $subtitle = $itemSubtitle;
+            }
+            if ($pageNumber === null && $itemPageNumber !== null) {
+                $pageNumber = $itemPageNumber;
+            }
+
             $sawQuality = true;
             $sawCoherence = true;
             if ($quality < $minQuality) {
@@ -291,12 +322,15 @@ PROMPT;
             }
         }
 
-        if ($texts === []) {
+        if ($pageItems === []) {
             throw new RuntimeException('Gemini zwróciło pusty corrected_text.');
         }
 
+        $texts = array_column($pageItems, 'text');
+
         return [
             'text' => implode("\n\n\n", $texts),
+            'pages' => $pageItems,
             'title' => $title,
             'subtitle' => $subtitle,
             'ocr_quality' => $sawQuality ? $minQuality : 0.0,

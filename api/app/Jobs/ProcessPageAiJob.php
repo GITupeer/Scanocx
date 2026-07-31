@@ -65,6 +65,19 @@ class ProcessPageAiJob implements ShouldQueue
             DB::transaction(function () use ($aiJob, $page, $result, $quota, $provider) {
                 $page->ai_text = $result['text'];
                 $page->ai_status = 'done';
+
+                $pagesMeta = $result['pages'] ?? null;
+                if (! is_array($pagesMeta) || $pagesMeta === []) {
+                    $pagesMeta = [[
+                        'text' => $result['text'],
+                        'title' => $result['title'],
+                        'subtitle' => $result['subtitle'],
+                        'page_number' => $result['page_number'],
+                        'ocr_quality' => $result['ocr_quality'],
+                        'coherence' => $result['coherence'],
+                    ]];
+                }
+
                 $page->ai_meta = [
                     'provider' => $provider,
                     'title' => $result['title'],
@@ -75,6 +88,7 @@ class ProcessPageAiJob implements ShouldQueue
                     'prompt_tokens' => $result['prompt_tokens'] ?? null,
                     'output_tokens' => $result['output_tokens'] ?? null,
                     'total_tokens' => $result['total_tokens'] ?? null,
+                    'pages' => $pagesMeta,
                 ];
                 if ($result['page_number'] !== null && $result['page_number'] !== '') {
                     $page->printed_page_number = $result['page_number'];

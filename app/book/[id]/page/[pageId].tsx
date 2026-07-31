@@ -83,6 +83,8 @@ export default function PageDetailScreen() {
   const [page, setPage] = useState<BookPage | null>(null);
   const [ocrText, setOcrText] = useState('');
   const [aiText, setAiText] = useState('');
+  /** Osobne teksty AI gdy Gemini wykryło wiele stron na jednym zdjęciu. */
+  const [aiPageTexts, setAiPageTexts] = useState<string[]>([]);
   const [printedPageNumber, setPrintedPageNumber] = useState('');
   const [textTab, setTextTab] = useState<TextTab>('ai');
   const [imagePreview, setImagePreview] = useState<ImagePreview>('cropped');
@@ -160,9 +162,20 @@ export default function PageDetailScreen() {
     setBook(data);
     setPage(found);
     setOcrText(found.ocrText);
+    const split =
+      found.aiAnalysis?.pages && found.aiAnalysis.pages.length > 0
+        ? found.aiAnalysis.pages.map((p) => p.text)
+        : found.aiText.trim()
+          ? [found.aiText]
+          : [];
+    setAiPageTexts(split);
     setAiText(found.aiText);
     setPrintedPageNumber(found.printedPageNumber ?? '');
-    setTextTab(found.aiStatus === 'done' && found.aiText.trim() ? 'ai' : 'ocr');
+    setTextTab(
+      found.aiOnly || (found.aiStatus === 'done' && found.aiText.trim())
+        ? 'ai'
+        : 'ocr'
+    );
     setImagePreview('cropped');
   }, []);
 
@@ -176,7 +189,12 @@ export default function PageDetailScreen() {
         throw new Error('Nie znaleziono strony.');
       }
 
-      if (found.imageUri && (await isLandscapeUri(found.imageUri))) {
+      // Rozkładówki (aiOnly) zostają w poziomie — nie wymuszaj pionu.
+      if (
+        !found.aiOnly &&
+        found.imageUri &&
+        (await isLandscapeUri(found.imageUri))
+      ) {
         await persistPortraitPageImage(id, pageId, found.imageUri);
         data = await getBook(id);
         found = data.pages.find((p) => p.id === pageId) ?? found;
@@ -238,7 +256,7 @@ export default function PageDetailScreen() {
   }, [analyzingThisPage, refresh]);
 
   const onSave = async () => {
-    if (!id || !pageId) return;
+    if (!id || !pageId || !page) return;
     setSaving(true);
     try {
       const normalized = printedPageNumber.trim() || null;
@@ -248,10 +266,53 @@ export default function PageDetailScreen() {
         ocrStatus: 'done',
         resetAi: false,
       });
+
+      const texts =
+        aiPageTexts.length > 0
+          ? aiPageTexts
+          : aiText.trim()
+            ? [aiText]
+            : [];
+      const joined = texts.map((t) => t.trim()).filter(Boolean).join('\n\n\n');
+      const prevPages = page.aiAnalysis?.pages;
+      const nextPages =
+        texts.length > 0
+          ? texts.map((text, i) => {
+              const prev = prevPages?.[i];
+              return {
+                text: text.trim(),
+                title: prev?.title ?? null,
+                subtitle: prev?.subtitle ?? null,
+                pageNumber: prev?.pageNumber ?? null,
+                ocrQuality: prev?.ocrQuality ?? page.aiAnalysis?.ocrQuality ?? 0,
+                coherence: prev?.coherence ?? page.aiAnalysis?.coherence ?? 0,
+              };
+            })
+          : undefined;
+      const nextAnalysis = page.aiAnalysis
+        ? {
+            ...page.aiAnalysis,
+            ...(nextPages && nextPages.length > 0 ? { pages: nextPages } : {}),
+          }
+        : nextPages && nextPages.length > 0
+          ? {
+              title: null,
+              subtitle: null,
+              ocrQuality: 0,
+              coherence: 0,
+              pageNumber: null,
+              promptTokens: null,
+              outputTokens: null,
+              totalTokens: null,
+              pages: nextPages,
+            }
+          : null;
+
       updated = await updatePageAi(id, pageId, {
-        aiText,
-        aiStatus: aiText.trim() ? 'done' : 'idle',
+        aiText: joined,
+        aiStatus: joined.trim() ? 'done' : 'idle',
         aiError: null,
+        aiAnalysis: nextAnalysis,
       });
       const found = updated.pages.find((p) => p.id === pageId) ?? null;
       if (found) applyPage(updated, found);
@@ -399,7 +460,7 @@ export default function PageDetailScreen() {
   }
 
   const position = currentPos.index >= 0 ? currentPos.index + 1 : 0;
-  const editingAi = textTab === 'ai';
+  const editingAi = page?.aiOnly ? true : textTab === 'ai';
   const hasOriginal = Boolean(page.originalImageUri?.trim());
   const previewUri =
     imagePreview === 'original' && hasOriginal
@@ -472,11 +533,16 @@ export default function PageDetailScreen() {
               </View>
             ) : null}
 
-            <View style={styles.imageCard}>
+            <View
+              style={[
+                styles.imageCard,
+                page.aiOnly ? styles.imageCardLandscape : null,
+              ]}>
               {previewUri ? (
                 <Image
                   source={{ uri: previewUri }}
                   style={styles.image}
+                  resizeMode="contain"
                   key={`${previewUri}-${showingOriginal ? 'orig' : 'crop'}`}
                 />
               ) : (
@@ -484,6 +550,12 @@ export default function PageDetailScreen() {
               )}
 
               <View style={styles.imageBadge}>
+                {aiPageTexts.length > 1 ? (
+                  <View style={styles.multiPageBadge}>
+                    <Icon name="bookOpen" size={12} color={colors.white} />
+                    <Text style={styles.multiPageBadgeText}>{aiPageTexts.length}</Text>
+                  </View>
+                ) : null}
                 <OcrStatusBadge status={runningOcr || rotating ? 'pending' : page.ocrStatus} />
                 <AiStatusBadge
                   status={
@@ -548,18 +620,34 @@ export default function PageDetailScreen() {
               hint="Numer z marginesu jest wykrywany automatycznie i usuwany z tekstu. Możesz go poprawić."
             />
 
-            <View style={styles.tabRow}>
-              <Pressable
-                onPress={() => setTextTab('ai')}
-                style={[styles.tab, editingAi && styles.tabActive]}>
-                <Text style={[styles.tabLabel, editingAi && styles.tabLabelActive]}>Tekst AI</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setTextTab('ocr')}
-                style={[styles.tab, !editingAi && styles.tabActive]}>
-                <Text style={[styles.tabLabel, !editingAi && styles.tabLabelActive]}>Tekst ze skanu</Text>
-              </Pressable>
-            </View>
+            {!page.aiOnly ? (
+              <View style={styles.tabRow}>
+                <Pressable
+                  onPress={() => setTextTab('ai')}
+                  style={[styles.tab, editingAi && styles.tabActive]}>
+                  <Text style={[styles.tabLabel, editingAi && styles.tabLabelActive]}>
+                    Tekst AI
+                    {aiPageTexts.length > 1 ? ` · ${aiPageTexts.length}` : ''}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setTextTab('ocr')}
+                  style={[styles.tab, !editingAi && styles.tabActive]}>
+                  <Text style={[styles.tabLabel, !editingAi && styles.tabLabelActive]}>
+                    Tekst ze skanu
+                  </Text>
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.tabRow}>
+                <View style={[styles.tab, styles.tabActive]}>
+                  <Text style={[styles.tabLabel, styles.tabLabelActive]}>
+                    Tekst AI
+                    {aiPageTexts.length > 1 ? ` · ${aiPageTexts.length} stron` : ''}
+                  </Text>
+                </View>
+              </View>
+            )}
 
             {page.aiStatus === 'error' && page.aiError ? (
               <View style={styles.errorBox}>
@@ -571,15 +659,59 @@ export default function PageDetailScreen() {
             ) : null}
 
             {editingAi ? (
-              <TextField
-                label="Tekst po korekcie AI"
-                value={aiText}
-                onChangeText={setAiText}
-                placeholder="Tu pojawi się tekst po korekcie AI…"
-                multiline
-                minHeight={240}
-                hint="Obie wersje (ze skanu i po AI) są przechowywane osobno."
-              />
+              aiPageTexts.length > 1 ? (
+                <View style={styles.aiPagesStack}>
+                  {aiPageTexts.map((text, index) => {
+                    const meta = page.aiAnalysis?.pages?.[index];
+                    const numberHint = meta?.pageNumber
+                      ? ` · nr ${meta.pageNumber}`
+                      : '';
+                    return (
+                      <TextField
+                        key={`ai-page-${index}`}
+                        label={`Tekst AI · strona ${index + 1}${numberHint}`}
+                        value={text}
+                        onChangeText={(value) => {
+                          setAiPageTexts((prev) => {
+                            const next = [...prev];
+                            next[index] = value;
+                            return next;
+                          });
+                          setAiText(
+                            // utrzymuj złączoną kopię na bieżąco
+                            (() => {
+                              const next = [...aiPageTexts];
+                              next[index] = value;
+                              return next.map((t) => t.trim()).filter(Boolean).join('\n\n\n');
+                            })()
+                          );
+                        }}
+                        placeholder={`Tekst strony ${index + 1} po korekcie AI…`}
+                        multiline
+                        minHeight={200}
+                        hint={
+                          index === aiPageTexts.length - 1
+                            ? 'Każda wykryta strona z rozkładówki ma własne pole.'
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
+                </View>
+              ) : (
+                <TextField
+                  label="Tekst po korekcie AI"
+                  value={aiPageTexts[0] ?? aiText}
+                  onChangeText={(value) => {
+                    setAiPageTexts(value ? [value] : []);
+                    setAiText(value);
+                  }}
+                  placeholder="Tu pojawi się tekst po korekcie AI…"
+                  multiline
+                  minHeight={240}
+                  hint="Obie wersje (ze skanu i po AI) są przechowywane osobno."
+                />
+              )
             ) : (
               <TextField
                 label="Tekst ze skanu"
@@ -873,6 +1005,27 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.line,
     ...shadow.soft,
+  },
+  imageCardLandscape: {
+    aspectRatio: 4 / 3,
+  },
+  multiPageBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(16, 191, 160, 0.92)',
+  },
+  multiPageBadgeText: {
+    color: colors.white,
+    fontSize: 12,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  aiPagesStack: {
+    gap: space.lg,
   },
   previewTabRow: {
     flexDirection: 'row',

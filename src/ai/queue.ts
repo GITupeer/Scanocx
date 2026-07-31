@@ -261,6 +261,23 @@ async function applyJobResults(
     if (job.status === 'done' && job.ai_text) {
       appliedDone.add(job.id);
       const meta = job.ai_meta;
+      const pages =
+        meta?.pages && Array.isArray(meta.pages)
+          ? meta.pages
+              .map((p) => {
+                const text = typeof p.text === 'string' ? p.text.trim() : '';
+                if (!text) return null;
+                return {
+                  text,
+                  title: p.title ?? null,
+                  subtitle: p.subtitle ?? null,
+                  pageNumber: p.page_number ?? null,
+                  ocrQuality: typeof p.ocr_quality === 'number' ? p.ocr_quality : 0,
+                  coherence: typeof p.coherence === 'number' ? p.coherence : 0,
+                };
+              })
+              .filter((p): p is NonNullable<typeof p> => p != null)
+          : undefined;
       const analysis =
         meta != null
           ? {
@@ -274,6 +291,7 @@ async function applyJobResults(
               outputTokens:
                 typeof meta.output_tokens === 'number' ? meta.output_tokens : null,
               totalTokens: typeof meta.total_tokens === 'number' ? meta.total_tokens : null,
+              ...(pages && pages.length > 0 ? { pages } : {}),
             }
           : null;
       await withBookMetaLock(() =>

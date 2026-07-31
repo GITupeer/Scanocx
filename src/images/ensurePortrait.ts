@@ -68,6 +68,31 @@ export async function ensurePortraitUri(
   return current.uri;
 }
 
+/**
+ * Zawsze zwraca JPEG w poziomie (width >= height).
+ * Spłaszcza EXIF do pikseli — ważne przy skanie rozkładówki w landscape.
+ */
+export async function ensureLandscapeUri(uri: string): Promise<string> {
+  // Pusty pipeline spłaszcza EXIF do pikseli.
+  let current = await manipulateAsync(uri, [], {
+    compress: 0.92,
+    format: SaveFormat.JPEG,
+  });
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { width, height } = await getImageSize(current.uri);
+    if (width >= height) {
+      break;
+    }
+    current = await manipulateAsync(current.uri, [{ rotate: 90 }], {
+      compress: 0.92,
+      format: SaveFormat.JPEG,
+    });
+  }
+
+  return current.uri;
+}
+
 export async function rotateUri(uri: string, degrees: 90 | 180 | 270): Promise<string> {
   const result = await manipulateAsync(uri, [{ rotate: degrees }], {
     compress: 0.92,
