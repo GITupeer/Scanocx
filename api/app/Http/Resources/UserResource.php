@@ -23,6 +23,7 @@ class UserResource extends JsonResource
         private ?array $exportQuota = null,
         private ?array $photoQuota = null,
         private ?array $bookQuota = null,
+        private ?array $tokenStats = null,
     ) {
         parent::__construct($resource);
     }
@@ -46,6 +47,7 @@ class UserResource extends JsonResource
             'export_quota' => $this->exportQuota,
             'photo_quota' => $this->photoQuota,
             'book_quota' => $this->bookQuota,
+            'token_stats' => $this->tokenStats,
             'created_at' => $user->created_at?->toIso8601String(),
         ];
     }

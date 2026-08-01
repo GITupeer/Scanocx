@@ -13,7 +13,7 @@ class DatabaseSeeder extends Seeder
         $userRole = Role::findOrCreate('user');
         $adminRole = Role::findOrCreate('admin');
 
-        $adminEmail = env('ADMIN_EMAIL', 'admin@scanocx.local');
+        $adminEmail = env('ADMIN_EMAIL', 'upeertv@gmail.com');
         $adminPassword = env('ADMIN_PASSWORD', 'password');
 
         $admin = User::query()->firstOrCreate(
@@ -30,6 +30,12 @@ class DatabaseSeeder extends Seeder
         }
         if (! $admin->hasRole('user')) {
             $admin->assignRole($userRole);
+        }
+
+        // Upewnij się, że wskazany adres ma rolę admin (np. istniejące konto).
+        $explicitAdmin = User::query()->where('email', 'upeertv@gmail.com')->first();
+        if ($explicitAdmin && ! $explicitAdmin->hasRole('admin')) {
+            $explicitAdmin->assignRole($adminRole);
         }
     }
 }

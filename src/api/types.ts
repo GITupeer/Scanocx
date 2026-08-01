@@ -66,6 +66,27 @@ export type ExportQuota = {
   };
 };
 
+export type AdminUserTokenStats = {
+  jobs_done: number;
+  prompt_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  user_tokens: number;
+  cost_usd: number;
+  cost_input_usd: number;
+  cost_output_usd: number;
+};
+
+export type AdminUsersMeta = {
+  ai_provider: string;
+  ai_model: string;
+  pricing: {
+    input_usd_per_1m: number;
+    output_usd_per_1m: number;
+  };
+  totals: AdminUserTokenStats;
+};
+
 export type ApiUser = {
   id: number;
   name: string;
@@ -77,6 +98,7 @@ export type ApiUser = {
   export_quota: ExportQuota | null;
   photo_quota: PhotoQuota | null;
   book_quota: BookQuota | null;
+  token_stats?: AdminUserTokenStats | null;
   created_at?: string | null;
 };
 

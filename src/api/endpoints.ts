@@ -3,6 +3,7 @@ import type {
   AiBatch,
   AiQuota,
   AiUsageItem,
+  AdminUsersMeta,
   ApiBook,
   ApiBookPage,
   ApiBookSummary,
@@ -296,8 +297,8 @@ export function fetchAiBatch(id: number): Promise<AiBatch> {
   return apiRequest<AiBatch>(`/api/ai/batches/${id}`);
 }
 
-export function fetchAdminUsers(): Promise<{ data: ApiUser[] }> {
-  return apiRequest<{ data: ApiUser[] }>('/api/admin/users');
+export function fetchAdminUsers(): Promise<{ data: ApiUser[]; meta: AdminUsersMeta }> {
+  return apiRequest<{ data: ApiUser[]; meta: AdminUsersMeta }>('/api/admin/users');
 }
 
 export function updateAdminUserPlan(
